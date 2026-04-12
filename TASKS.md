@@ -317,7 +317,7 @@ NOTE: `ymir-atmosphere` added as direct dep to ymir-biome because `palette_for` 
 
 ### BIOME-02: Whittaker classification
 - **Crate:** ymir-biome
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** BIOME-01
 - **Blocked:** no
 - **Assignee:** agent
@@ -328,10 +328,10 @@ Temperature × moisture → Biome lookup, returning only biomes in the active pa
 
 ### BIOME-03: Markov smoothing
 - **Crate:** ymir-biome
-- **Status:** pending
+- **Status:** in-progress
 - **Depends on:** BIOME-02
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 Markov transition smoothing pass over tile neighbors. Weight file schema (TOML/JSON) with transition probabilities between biomes. Phase 2 ships hand-tuned weights per palette (data-derived weights are Phase 5). Tests: smoothing reduces lone-tile islands; preserves large contiguous regions; idempotent-ish after enough iterations.
 

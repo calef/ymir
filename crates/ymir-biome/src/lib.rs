@@ -10,3 +10,4 @@ pub mod weight_schema;
 pub mod whittaker;
 
 pub use palette::{Biome, BiomePalette, palette_for};
+pub use whittaker::classify;

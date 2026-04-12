@@ -135,7 +135,13 @@ mod tests {
         assert_eq!(a.moisture.per_tile, b.moisture.per_tile);
         assert_eq!(a.wind.cell_count, b.wind.cell_count);
         assert_eq!(a.wind.per_tile.len(), b.wind.per_tile.len());
-        for (i, (wa, wb)) in a.wind.per_tile.iter().zip(b.wind.per_tile.iter()).enumerate() {
+        for (i, (wa, wb)) in a
+            .wind
+            .per_tile
+            .iter()
+            .zip(b.wind.per_tile.iter())
+            .enumerate()
+        {
             assert_eq!(wa.u, wb.u, "tile {i} u differs");
             assert_eq!(wa.v, wb.v, "tile {i} v differs");
         }
@@ -173,8 +179,7 @@ mod tests {
         let sample_indices = [0usize, n / 4, n / 2, (3 * n) / 4, n - 1];
         for &i in &sample_indices {
             assert_eq!(
-                decoded.temperature.per_tile_k[i],
-                map.temperature.per_tile_k[i],
+                decoded.temperature.per_tile_k[i], map.temperature.per_tile_k[i],
                 "temperature tile {i} differs after round trip"
             );
             assert_eq!(
