@@ -9,3 +9,7 @@ pub mod hex;
 pub mod noise;
 pub mod skeleton;
 pub mod tectonics;
+
+pub use tectonics::{
+    BoundaryType, Plate, PlateBoundary, TectonicConfig, TectonicData, generate_tectonics,
+};

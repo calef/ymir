@@ -135,7 +135,7 @@ Stage-level dependency graph. When an override is applied at stage N, stages N t
 
 ### SYS-01: Orbital placement algorithm
 - **Crate:** ymir-system
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** CORE-01, CORE-02, CAT-01
 - **Blocked:** no
 - **Assignee:** agent
@@ -144,19 +144,19 @@ Planet placement using Kepler occurrence rates, Hill sphere spacing (delta >= 8 
 
 ### SYS-02: Bulk property derivation
 - **Crate:** ymir-system
-- **Status:** pending
+- **Status:** done
 - **Depends on:** CORE-01, SYS-01
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 Mass-radius relationships (Chen & Kipping 2017), density, surface gravity, equilibrium temperature, solar irradiance. Tidal lock check. `OrbitalBody` struct per design doc section 5.2.
 
 ### ATMO-01: Atmosphere retention (Jeans escape)
 - **Crate:** ymir-atmosphere
-- **Status:** pending
+- **Status:** in-progress
 - **Depends on:** CORE-01, SYS-02
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 Escape velocity vs thermal velocity for each molecule. Determines which species a planet retains. Unit tests: Earth retains N2/O2/H2O, loses H2/He. Mars retains CO2, loses H2O over Gyr. Per design doc section 5.3.
 
@@ -180,7 +180,7 @@ Icosahedral geodesic grid with configurable subdivision level. Tile neighbor com
 
 ### SURF-02: Tectonic plate generation
 - **Crate:** ymir-surface
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** CORE-02, SURF-01
 - **Blocked:** no
 - **Assignee:** agent
