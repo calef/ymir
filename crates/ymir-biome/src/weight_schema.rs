@@ -99,7 +99,7 @@ impl BiomeTransitions {
     }
 
     /// Self-affinity (a tile "prefers" to stay the same). Defaults to
-    /// [`DEFAULT_SELF_AFFINITY`] (1.0) if not explicitly set in the table,
+    /// `DEFAULT_SELF_AFFINITY` (1.0) if not explicitly set in the table,
     /// and returns 0 for biomes outside the declared palette.
     pub fn self_affinity(&self, biome: Biome) -> f64 {
         if !self.palette.contains(biome) {

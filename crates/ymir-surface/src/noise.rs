@@ -2,7 +2,7 @@
 //! and detail generation.
 //!
 //! This module wraps the [`noise`](https://docs.rs/noise) crate's
-//! [`OpenSimplex`](noise::OpenSimplex) sampler and exposes a spherical FBM
+//! [`OpenSimplex`] sampler and exposes a spherical FBM
 //! helper. Callers pass latitude/longitude in radians; the point is lifted
 //! to a 3D unit vector before being evaluated so the noise field is
 //! naturally continuous across the date line and at the poles.

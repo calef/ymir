@@ -50,12 +50,14 @@ Set up workspace Cargo.toml, all 10 library crate stubs with correct inter-crate
 
 ### INFRA-02: Set up CI workflow
 - **Crate:** (infra)
-- **Status:** pending
+- **Status:** done
 - **Depends on:** INFRA-01
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** claude
 
 GitHub Actions workflow: fmt check, clippy, test, doc build. Deferred until GitHub remote exists.
+
+NOTE: `.github/workflows/ci.yml` written with four jobs (fmt, clippy, test, doc) all gated by `RUSTFLAGS=-D warnings` and `RUSTDOCFLAGS=-D warnings`. Uses `dtolnay/rust-toolchain@stable` and `Swatinem/rust-cache@v2`. Runs on push and PR to `main`. Tests use `--release` to keep the VALID-* + regenerate integration tests tractable (each runs the full pipeline at subdivision 5; debug mode is ~70 s per test, release is ~10-15 s). While writing this, two rustdoc lints tripped under `-D warnings` and were fixed in place: a private intra-doc link in `weight_schema.rs::self_affinity` and a redundant explicit link target in `noise.rs`. Workflow will activate on first push to a GitHub remote; dormant until then.
 
 ### INFRA-03: Create .gitignore and repo boilerplate
 - **Crate:** (infra)
