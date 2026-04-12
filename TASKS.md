@@ -72,73 +72,73 @@ GitHub Actions workflow: fmt check, clippy, test, doc build. Deferred until GitH
 
 ### CORE-01: Implement Sourced<T> and Source enum
 - **Crate:** ymir-core
-- **Status:** ready
+- **Status:** done
 - **Depends on:** INFRA-01
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 `Source` enum (Derived, Observed, Assumed) and `Sourced<T>` wrapper with constructor methods and serde support. Per design doc section 4.1. Include property-based tests via proptest.
 
 ### CORE-02: Seeded PRNG module
 - **Crate:** ymir-core
-- **Status:** ready
+- **Status:** done
 - **Depends on:** INFRA-01
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 PCG-based PRNG wrapper using `rand_pcg`. Seeded, deterministic, with helpers for deriving child seeds from (parent_seed, context_string). Ensures reproducibility per design doc determinism goal.
 
 ### CORE-03: Shared traits for cross-crate abstractions
 - **Crate:** ymir-core
-- **Status:** ready
+- **Status:** done
 - **Depends on:** INFRA-01
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 Define trait interfaces used across crates: `GeoTile` (lat, lon, elevation), `PipelineStage` (input/output types, dirty tracking). Per open question #13 resolution.
 
 ### CORE-04: Override file parsing and validation
 - **Crate:** ymir-core
-- **Status:** pending
+- **Status:** done
 - **Depends on:** CORE-01
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 Parse override JSON files per the schema in design doc section 4.1. Validate structure, report errors. Per-stage override application (not per-field in Phase 1).
 
 ### CORE-05: Dependency graph and dirty tracking
 - **Crate:** ymir-core
-- **Status:** pending
+- **Status:** done
 - **Depends on:** CORE-01, CORE-03
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 Stage-level dependency graph. When an override is applied at stage N, stages N through 7 are marked dirty. Supports the `regenerate` workflow. Per design doc section 4.1 override rules.
 
 ### CAT-01: StarContext struct and habitable zone calculation
 - **Crate:** ymir-catalog
-- **Status:** ready
+- **Status:** done
 - **Depends on:** CORE-01
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 `StarContext` struct with all fields from design doc section 5.1. Kopparapu et al. (2013, 2014) HZ calculation. Unit tests against published values (Sun HZ inner = 0.99 AU). Hardcoded Tau Ceti data for Phase 1 (no Parquet ingest).
 
 ### CAT-02: Exoplanet record types
 - **Crate:** ymir-catalog
-- **Status:** ready
+- **Status:** done
 - **Depends on:** CORE-01
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 `ExoplanetRecord` struct for known exoplanet data from NASA Exoplanet Archive. Hardcoded Tau Ceti system data for Phase 1. Struct design should support future ingest from real catalog data.
 
 ### SYS-01: Orbital placement algorithm
 - **Crate:** ymir-system
-- **Status:** pending
+- **Status:** in-progress
 - **Depends on:** CORE-01, CORE-02, CAT-01
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 Planet placement using Kepler occurrence rates, Hill sphere spacing (delta >= 8 R_Hill), known exoplanet anchoring. Per design doc section 5.2.
 
@@ -171,19 +171,19 @@ Simplified composition model (Terran vs SuperEarth vs metallicity influence). Gr
 
 ### SURF-01: Geodesic grid generation
 - **Crate:** ymir-surface
-- **Status:** pending
+- **Status:** done
 - **Depends on:** CORE-01, CORE-03
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 Icosahedral geodesic grid with configurable subdivision level. Tile neighbor computation. Tests: all tiles have 5 or 6 neighbors, total tiles = 10*4^N + 2, symmetric neighbor relationships. Per design doc section 5.4.
 
 ### SURF-02: Tectonic plate generation
 - **Crate:** ymir-surface
-- **Status:** pending
+- **Status:** in-progress
 - **Depends on:** CORE-02, SURF-01
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 Poisson-seeded flood fill for plate assignment. Boundary classification (convergent/divergent/transform). Plate count scaled by surface area and internal heat. Tests: every tile in exactly one plate, convergent boundaries have positive elevation bias. Per design doc section 5.4.
 
@@ -198,10 +198,10 @@ Tectonic bias field + spherical fractal noise. Noise amplitude scaled by gravity
 
 ### STOR-01: World manifest serialization
 - **Crate:** ymir-storage
-- **Status:** ready
+- **Status:** done
 - **Depends on:** CORE-01
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 Serialize/deserialize world manifest (star context, body params, config, seed, overrides). JSON manifest + binary skeleton data via bincode. World directory layout per design doc section 6.2.
 
@@ -225,9 +225,9 @@ Wire up the full pipeline via clap CLI. `ymir generate --star "Tau Ceti" --seed 
 
 ### CLI-02: `ymir info` command
 - **Crate:** ymir (binary)
-- **Status:** pending
+- **Status:** done
 - **Depends on:** STOR-01
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 Print summary of a generated world: star properties, planet properties, atmosphere, provenance stats. Per design doc section 7.5.

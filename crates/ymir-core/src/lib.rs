@@ -9,3 +9,10 @@ pub mod override_file;
 pub mod prng;
 pub mod provenance;
 pub mod sourced;
+pub mod traits;
+
+pub use dependency_graph::{PipelineDirtyState, Stage};
+pub use override_file::{OverrideError, OverrideFile, StageOverrides};
+pub use prng::WorldRng;
+pub use sourced::{Source, Sourced};
+pub use traits::{GeoTile, PipelineStage, SphericalPoint};
