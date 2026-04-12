@@ -328,7 +328,7 @@ Temperature × moisture → Biome lookup, returning only biomes in the active pa
 
 ### BIOME-03: Markov smoothing
 - **Crate:** ymir-biome
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** BIOME-02
 - **Blocked:** no
 - **Assignee:** agent
@@ -337,7 +337,7 @@ Markov transition smoothing pass over tile neighbors. Weight file schema (TOML/J
 
 ### BIOME-04: BiomeMap integration
 - **Crate:** ymir-biome
-- **Status:** pending
+- **Status:** ready
 - **Depends on:** BIOME-03
 - **Blocked:** no
 - **Assignee:**
