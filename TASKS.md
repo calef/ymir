@@ -346,21 +346,23 @@ Markov transition smoothing pass over tile neighbors. Weight file schema (TOML/J
 
 ### STOR-02: Climate and biome persistence
 - **Crate:** ymir-storage
-- **Status:** ready
+- **Status:** done
 - **Depends on:** CLIM-04, BIOME-04
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 Because ymir-storage cannot depend on ymir-climate / ymir-biome per the crate dependency rules, add generic save/load helpers in ymir-storage (`save_bin<T: Serialize>(path, &t)`, `load_bin<T: DeserializeOwned>(path) -> T`) and keep the concrete climate.bin / biomes.bin writes in the binary crate. Update `stages_computed` vocabulary in the manifest ("climate", "biomes") and extend `ymir info` to summarize climate stats (mean T, moisture coverage) and biome histogram.
 
 ### REND-02: Biome-colored Mollweide
 - **Crate:** ymir-render
-- **Status:** ready
+- **Status:** done
 - **Depends on:** BIOME-04
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 Add `render_biome_mollweide(&SkeletonWorld, &BiomeMap, cfg)` producing a PNG where each tile is colored by biome (static color table per Biome variant). Keep the elevation renderer; this is an additional entry point. Tests: dimensions, determinism, recognizable palette-level distinctions (Earth-like shows greens/blues/tans; Mars-like shows reds/browns).
+
+NOTE: Implemented as two new modules in ymir-render: `biome_palette` (exhaustive `match` on `Biome` so adding a variant breaks the build) and `biome_mollweide` (reuses the existing Mollweide inverse + nearest-tile dot-product search from `globe_renderer`). Off-map background is a fixed deep near-black `[10, 10, 12]` chosen so it can't collide with any biome color; not a config knob. Synthetic-world tests stamp `BiomeMap` directly rather than running the full climate pipeline, keeping the renderer tests hermetic and fast. `BiomeRenderConfig::default()` is 2048x1024 (Phase 1 preview size).
 
 ### CLI-04: Extend ymir generate for climate and biomes
 - **Crate:** ymir (binary)

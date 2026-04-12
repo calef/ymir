@@ -7,13 +7,16 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use ymir_atmosphere::AtmosphereModel;
+use ymir_biome::BiomeMap;
 use ymir_catalog::exoplanets::ExoplanetRecord;
 use ymir_catalog::sol::sol_context;
 use ymir_catalog::star_context::StarContext;
+use ymir_climate::ClimateMap;
 use ymir_core::WorldRng;
 use ymir_render::globe_renderer::{GlobeRenderConfig, render_skeleton_mollweide_to_path};
 use ymir_storage::manifest::{GenerationConfig, WorldManifest};
 use ymir_storage::world_io::WorldDirectory;
+use ymir_storage::{load_bin, save_bin};
 use ymir_surface::skeleton::SkeletonWorld;
 use ymir_system::{OrbitalBody, PlacementConfig, PlanetType, derive_body, place_planets};
 
@@ -356,6 +359,43 @@ fn load_skeleton(wd: &WorldDirectory) -> Result<SkeletonWorld, String> {
     })
 }
 
+/// Bincode-serialize a [`ClimateMap`] to `<world>/climate.bin`.
+///
+/// `ymir-storage` cannot depend on `ymir-climate` (layering rule), so this
+/// concrete wrapper lives in the binary crate and delegates to the generic
+/// [`save_bin`] helper.
+#[allow(dead_code)]
+fn save_climate(wd: &WorldDirectory, climate: &ClimateMap) -> Result<(), String> {
+    let path = wd.climate_path();
+    save_bin(&path, climate)
+        .map_err(|e| format!("failed to serialize climate to {}: {}", path.display(), e))
+}
+
+/// Load a previously saved [`ClimateMap`] from `<world>/climate.bin`.
+#[allow(dead_code)]
+fn load_climate(wd: &WorldDirectory) -> Result<ClimateMap, String> {
+    let path = wd.climate_path();
+    load_bin(&path).map_err(|e| format!("failed to load climate at {}: {}", path.display(), e))
+}
+
+/// Bincode-serialize a [`BiomeMap`] to `<world>/biomes.bin`.
+///
+/// Mirror of [`save_climate`]: `ymir-storage` cannot depend on `ymir-biome`,
+/// so this lives in the binary and delegates to [`save_bin`].
+#[allow(dead_code)]
+fn save_biomes(wd: &WorldDirectory, biomes: &BiomeMap) -> Result<(), String> {
+    let path = wd.biomes_path();
+    save_bin(&path, biomes)
+        .map_err(|e| format!("failed to serialize biomes to {}: {}", path.display(), e))
+}
+
+/// Load a previously saved [`BiomeMap`] from `<world>/biomes.bin`.
+#[allow(dead_code)]
+fn load_biomes(wd: &WorldDirectory) -> Result<BiomeMap, String> {
+    let path = wd.biomes_path();
+    load_bin(&path).map_err(|e| format!("failed to load biomes at {}: {}", path.display(), e))
+}
+
 /// Compute (min, mean, max) elevation from a [`SkeletonWorld`].
 fn elevation_stats(skeleton: &SkeletonWorld) -> (f64, f64, f64) {
     let elevs = &skeleton.elevation.elevations_m;
@@ -468,6 +508,32 @@ fn run_info(path: &Path) -> Result<(), String> {
         println!("(skeleton.bin not present; skipping body/atmosphere/elevation section)");
     }
 
+    // Climate summary (if climate.bin exists).
+    if world.climate_path().exists() {
+        match load_climate(&world) {
+            Ok(climate) => {
+                println!();
+                print_climate_section(&climate);
+            }
+            Err(e) => {
+                eprintln!("warning: failed to load climate.bin: {e}");
+            }
+        }
+    }
+
+    // Biome histogram (if biomes.bin exists).
+    if world.biomes_path().exists() {
+        match load_biomes(&world) {
+            Ok(biomes) => {
+                println!();
+                print_biome_section(&biomes);
+            }
+            Err(e) => {
+                eprintln!("warning: failed to load biomes.bin: {e}");
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -534,6 +600,61 @@ fn print_skeleton_section(skeleton: &SkeletonWorld) {
     println!("  Min:  {:.1} m", e_min);
     println!("  Mean: {:.1} m", e_mean);
     println!("  Max:  {:.1} m", e_max);
+}
+
+fn print_climate_section(climate: &ClimateMap) {
+    let temps = &climate.temperature.per_tile_k;
+    let n = temps.len();
+    println!("Climate ({n} tiles):");
+    if n == 0 {
+        println!("  (empty temperature field)");
+        return;
+    }
+    let t_min = climate.temperature.min();
+    let t_max = climate.temperature.max();
+    let t_mean = climate.temperature.mean();
+    let m_mean = climate.moisture.mean();
+    let m_coverage = climate.moisture.coverage_above(0.5);
+
+    println!(
+        "  Temperature:     mean {:.1} K (min {:.1} K, max {:.1} K)",
+        t_mean, t_min, t_max
+    );
+    println!(
+        "  Moisture:        mean {:.3}, coverage >0.5 = {:.1}%",
+        m_mean,
+        m_coverage * 100.0
+    );
+    println!("  Wind cell count: {}", climate.wind.cell_count);
+}
+
+fn print_biome_section(biomes: &BiomeMap) {
+    let total = biomes.len();
+    println!("Biomes ({total} tiles, palette: {:?}):", biomes.palette);
+    if total == 0 {
+        println!("  (empty biome map)");
+        return;
+    }
+    let mut hist = biomes.histogram();
+    // Sort by count descending for the "top N" display, breaking ties on the
+    // already-deterministic Debug-name order produced by BiomeMap::histogram.
+    hist.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)))
+    });
+    let top = hist.iter().take(10);
+    for (biome, count) in top {
+        let pct = (*count as f64) / (total as f64) * 100.0;
+        println!(
+            "  {:<24} {:>6} tiles ({:.1}%)",
+            format!("{:?}", biome),
+            count,
+            pct
+        );
+    }
+    if hist.len() > 10 {
+        println!("  ... and {} more biome(s)", hist.len() - 10);
+    }
 }
 
 #[cfg(test)]

@@ -49,7 +49,10 @@ pub struct WorldManifest {
     pub created_at: String,
     /// Path to the overrides JSON file, if one was used.
     pub overrides_file: Option<String>,
-    /// Names of pipeline stages that were computed.
+    /// Names of pipeline stages that were computed. Valid values:
+    /// `"stellar" | "system" | "atmosphere" | "skeleton" | "climate" | "biomes"`.
+    /// Stored as free-form strings rather than an enum so the manifest format
+    /// stays forward-compatible as later phases add stages.
     pub stages_computed: Vec<String>,
     /// Generation configuration parameters.
     pub config: GenerationConfig,
