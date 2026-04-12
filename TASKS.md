@@ -377,12 +377,16 @@ NOTE: `--skip-climate` implies `--skip-biomes` enforced in code (biomes require 
 
 ### CLI-03: ymir regenerate command
 - **Crate:** ymir (binary)
-- **Status:** pending
+- **Status:** done
 - **Depends on:** CLI-04, CORE-04, CORE-05
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 `ymir regenerate --world PATH --overrides FILE` applies a per-stage override JSON, marks dirty stages via the dependency graph, recomputes only dirty stages, and rewrites the manifest with the new `stages_computed` list and overrides_file pointer. Tests: override at stage 3 (atmosphere) recomputes atmosphere + skeleton + climate + biomes but leaves star/system bits unchanged; byte comparison of unchanged stage artifacts.
+
+NOTE (implementation): `run_generate` was refactored into stage-helper functions: `compute_upstream` (stages 1-3 together: star lookup, placement/fixed-body, atmosphere derivation), `compute_skeleton`, `compute_climate`, `compute_biomes`, plus render helpers (`render_elevation_preview`, `render_biome_preview`). Each compute helper accepts a `StageOverrides` and merges any JSON override into the computed stage output via deep-merge (`merge_json` + `apply_json_override`). `run_regenerate` (new) loads the manifest, parses the override file via CORE-04, computes dirty stages via `dirty_stages_from_overrides` (which drives `PipelineDirtyState::mark_override_at`), then for each stage either recomputes (if dirty) or loads the persisted artifact. The manifest is rewritten with `overrides_file` set to the override file path. Clean stages stay byte-identical on disk because the code path never touches their files. Byte-identity of `skeleton.bin` across a climate-only override is exercised by `regenerate::regenerate_climate_override_leaves_skeleton_byte_identical`.
+
+Phase-2 caveat: stages 1-3 (stellar, system, atmosphere) live only inside `skeleton.bin` in the current persistence layout — there are no separate `stellar.bin` or `system.bin` files. So "byte-identical upstream artifacts" collapses to "skeleton.bin byte-identical" when no upstream override is applied. Overrides at stages 5-6 (climate, biome) leave skeleton.bin untouched; overrides at stages 2-4 rebuild skeleton.bin. When only climate or biome are dirty, the upstream is loaded from `skeleton.bin` rather than recomputed, preserving byte-identity by construction.
 
 ### VALID-01: Earth validation test
 - **Crate:** ymir (binary, integration tests)
@@ -419,7 +423,7 @@ NOTE: Implemented via Option A (full CLI invocation) as `tests/valid_tidally_loc
 
 ### VALID-04: Override progression test
 - **Crate:** ymir (binary, integration tests)
-- **Status:** pending
+- **Status:** ready
 - **Depends on:** CLI-03
 - **Blocked:** no
 - **Assignee:**

@@ -12,7 +12,7 @@ use ymir_catalog::exoplanets::ExoplanetRecord;
 use ymir_catalog::sol::sol_context;
 use ymir_catalog::star_context::StarContext;
 use ymir_climate::{ClimateConfig, ClimateMap};
-use ymir_core::WorldRng;
+use ymir_core::{OverrideFile, PipelineDirtyState, Stage, StageOverrides, WorldRng};
 use ymir_render::biome_mollweide::{BiomeRenderConfig, render_biome_mollweide};
 use ymir_render::globe_renderer::{GlobeRenderConfig, render_skeleton_mollweide_to_path};
 use ymir_storage::manifest::{GenerationConfig, WorldManifest};
@@ -73,6 +73,27 @@ enum Commands {
         /// Path to the world directory.
         path: PathBuf,
     },
+    /// Recompute dirty stages of an existing world after applying an override file.
+    ///
+    /// Given a world directory produced by `ymir generate` and a per-stage
+    /// override JSON file, this command loads the manifest, determines which
+    /// pipeline stages are downstream of the override (via CORE-05's
+    /// dependency graph), recomputes only those dirty stages while re-using
+    /// clean stage artifacts verbatim, and rewrites the manifest.
+    Regenerate {
+        /// Path to the existing world directory (must contain manifest.json).
+        #[arg(long)]
+        world: PathBuf,
+        /// Path to the override JSON file (see design doc section 4.1).
+        #[arg(long)]
+        overrides: PathBuf,
+        /// Preview PNG width in pixels (used when rebuilding previews).
+        #[arg(long, default_value_t = 1024)]
+        preview_width: u32,
+        /// Preview PNG height in pixels (used when rebuilding previews).
+        #[arg(long, default_value_t = 512)]
+        preview_height: u32,
+    },
 }
 
 fn main() -> ExitCode {
@@ -107,6 +128,17 @@ fn main() -> ExitCode {
             })
         }
         Commands::Info { path } => run_info(&path),
+        Commands::Regenerate {
+            world,
+            overrides,
+            preview_width,
+            preview_height,
+        } => run_regenerate(&RegenerateArgs {
+            world,
+            overrides,
+            preview_width,
+            preview_height,
+        }),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -228,15 +260,23 @@ fn lookup_star(name: &str) -> Result<StarSelection, String> {
     }
 }
 
-/// Run the full Phase 1 pipeline and persist the resulting world.
-fn run_generate(args: &GenerateArgs) -> Result<(), String> {
-    println!("[1/7] star context: {}", args.star);
-    let selection = lookup_star(&args.star)?;
+/// Compute stages 1-3 (stellar context + planetary system + atmosphere),
+/// applying any per-stage overrides from `overrides`.
+///
+/// Returns the resolved `(star_ctx, body, atmosphere)` tuple. This is the
+/// shared upstream path used by both `run_generate` and `run_regenerate`.
+fn compute_upstream(
+    star_name: &str,
+    planet_index: usize,
+    seed: u64,
+    enable_biology: bool,
+    overrides: &StageOverrides,
+) -> Result<(StarContext, OrbitalBody, AtmosphereModel), String> {
+    let selection = lookup_star(star_name)?;
 
-    let (star_ctx, body) = match selection {
+    let (star_ctx, mut body) = match selection {
         StarSelection::Derived { star, known } => {
-            println!("[2/7] system placement (seed={})...", args.seed);
-            let mut placement_rng = WorldRng::new(args.seed).child("placement");
+            let mut placement_rng = WorldRng::new(seed).child("placement");
             let placed = place_planets(
                 &star,
                 &known,
@@ -246,64 +286,186 @@ fn run_generate(args: &GenerateArgs) -> Result<(), String> {
             if placed.is_empty() {
                 return Err("placement produced no planets".to_string());
             }
-            if args.planet >= placed.len() {
+            if planet_index >= placed.len() {
                 return Err(format!(
                     "planet index {} out of range (system has {} planets)",
-                    args.planet,
+                    planet_index,
                     placed.len()
                 ));
             }
-            let chosen = &placed[args.planet];
-            let chosen_label = chosen
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("planet #{}", args.planet));
-            println!(
-                "       chose {} at {:.3} AU (R = {:.2} R_earth, known = {})",
-                chosen_label, chosen.semi_major_axis, chosen.radius, chosen.is_known
-            );
-
-            println!("[3/7] bulk properties...");
-            let mut body_rng = WorldRng::new(args.seed).child("body");
-            let derived = derive_body(chosen, &star, &mut body_rng, args.planet as u64);
+            let chosen = &placed[planet_index];
+            let mut body_rng = WorldRng::new(seed).child("body");
+            let derived = derive_body(chosen, &star, &mut body_rng, planet_index as u64);
             (star, derived)
         }
         StarSelection::Fixed { star, body } => {
-            // Hand-filled Solar-system bodies bypass placement and derivation,
-            // so --planet must be 0 (the single fixed body). Any other value
-            // is rejected loudly to avoid silently ignoring user input.
-            if args.planet != 0 {
+            if planet_index != 0 {
                 return Err(format!(
                     "--planet must be 0 for hand-filled Sol-system bodies (got {}); \
                      Earth and Mars are returned as single fixed bodies",
-                    args.planet
+                    planet_index
                 ));
             }
-            let body_label = body.name.clone().unwrap_or_else(|| "planet #0".to_string());
-            println!(
-                "[2/7] fixed Sol-system body: {} at {:.3} AU (bypassing placement)",
-                body_label, body.semi_major_axis
-            );
-            println!(
-                "[3/7] hand-filled bulk properties (M = {:.3} M_earth, R = {:.3} R_earth)",
-                body.mass, body.radius
-            );
             (star, body)
         }
     };
 
-    println!("[4/7] atmosphere (biology = {})...", args.enable_biology);
-    let atmosphere = AtmosphereModel::derive(&body, &star_ctx, args.enable_biology);
+    if let Some(ov) = &overrides.orbital_body {
+        body = apply_json_override(&body, ov)
+            .map_err(|e| format!("failed to apply orbital_body override: {e}"))?;
+    }
 
-    println!("[5/7] skeleton (subdivision = {})...", args.subdivision);
-    let skeleton = SkeletonWorld::build(
+    let mut atmosphere = AtmosphereModel::derive(&body, &star_ctx, enable_biology);
+    if let Some(ov) = &overrides.atmosphere {
+        atmosphere = apply_json_override(&atmosphere, ov)
+            .map_err(|e| format!("failed to apply atmosphere override: {e}"))?;
+    }
+
+    Ok((star_ctx, body, atmosphere))
+}
+
+/// Compute the skeleton stage (stage 4), applying any skeleton override.
+fn compute_skeleton(
+    body: OrbitalBody,
+    atmosphere: AtmosphereModel,
+    subdivision: u32,
+    seed: u64,
+    overrides: &StageOverrides,
+) -> Result<SkeletonWorld, String> {
+    let mut skeleton = SkeletonWorld::build(body, atmosphere, subdivision, seed);
+    if let Some(ov) = &overrides.skeleton {
+        skeleton = apply_json_override(&skeleton, ov)
+            .map_err(|e| format!("failed to apply skeleton override: {e}"))?;
+    }
+    Ok(skeleton)
+}
+
+/// Compute the climate stage (stage 5), applying any climate override.
+fn compute_climate(
+    skeleton: &SkeletonWorld,
+    overrides: &StageOverrides,
+) -> Result<ClimateMap, String> {
+    let mut climate = ClimateMap::build(skeleton, &ClimateConfig::default());
+    if let Some(ov) = &overrides.climate {
+        climate = apply_json_override(&climate, ov)
+            .map_err(|e| format!("failed to apply climate override: {e}"))?;
+    }
+    Ok(climate)
+}
+
+/// Compute the biome stage (stage 6), applying any biome override.
+fn compute_biomes(
+    skeleton: &SkeletonWorld,
+    climate: &ClimateMap,
+    overrides: &StageOverrides,
+) -> Result<BiomeMap, String> {
+    let mut biomes = BiomeMap::build(skeleton, climate, &BiomeMapConfig::default());
+    if let Some(ov) = &overrides.biome {
+        biomes = apply_json_override(&biomes, ov)
+            .map_err(|e| format!("failed to apply biome override: {e}"))?;
+    }
+    Ok(biomes)
+}
+
+/// Apply a partial JSON override to a serde-serializable value by merging
+/// the override's object fields onto a JSON view of `base`, then
+/// deserializing back.
+///
+/// This is the per-stage override merge strategy for Phase 2: compute the
+/// stage normally, then overlay any user-supplied fields. The override JSON
+/// is expected to be an object; scalar, array, or null overrides replace
+/// wholesale only at the outermost level.
+fn apply_json_override<T>(base: &T, override_value: &serde_json::Value) -> Result<T, String>
+where
+    T: serde::Serialize + serde::de::DeserializeOwned,
+{
+    let mut base_json = serde_json::to_value(base).map_err(|e| format!("serialize base: {e}"))?;
+    merge_json(&mut base_json, override_value);
+    serde_json::from_value(base_json).map_err(|e| format!("deserialize merged: {e}"))
+}
+
+/// Recursively merge `patch` into `target`. Object members are merged key by
+/// key; everything else is replaced wholesale. This mirrors the common
+/// "deep-merge JSON" pattern and keeps override files terse (callers supply
+/// only the fields they want to change).
+fn merge_json(target: &mut serde_json::Value, patch: &serde_json::Value) {
+    match (target, patch) {
+        (serde_json::Value::Object(t), serde_json::Value::Object(p)) => {
+            for (k, v) in p {
+                merge_json(t.entry(k.clone()).or_insert(serde_json::Value::Null), v);
+            }
+        }
+        (t, p) => {
+            *t = p.clone();
+        }
+    }
+}
+
+/// Render the elevation preview PNG.
+fn render_elevation_preview(
+    wd: &WorldDirectory,
+    skeleton: &SkeletonWorld,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    let render_cfg = GlobeRenderConfig {
+        width,
+        height,
+        background: [0, 0, 0],
+    };
+    let preview_path = wd.root.join("preview.png");
+    render_skeleton_mollweide_to_path(skeleton, &render_cfg, &preview_path)
+        .map_err(|e| format!("failed to write preview {}: {}", preview_path.display(), e))
+}
+
+/// Render the biome preview PNG.
+fn render_biome_preview(
+    wd: &WorldDirectory,
+    skeleton: &SkeletonWorld,
+    biomes: &BiomeMap,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    let biome_cfg = BiomeRenderConfig { width, height };
+    let biome_preview_path = wd.root.join("preview_biome.png");
+    let img = render_biome_mollweide(skeleton, biomes, &biome_cfg);
+    img.save(&biome_preview_path).map_err(|e| {
+        format!(
+            "failed to write biome preview {}: {}",
+            biome_preview_path.display(),
+            e
+        )
+    })
+}
+
+/// Run the full Phase 1 pipeline and persist the resulting world.
+fn run_generate(args: &GenerateArgs) -> Result<(), String> {
+    let empty_overrides = StageOverrides::default();
+
+    println!("[1/7] star context: {}", args.star);
+    println!(
+        "[2/7] system placement / body selection (seed={})...",
+        args.seed
+    );
+    println!("[3/7] atmosphere (biology = {})...", args.enable_biology);
+    let (star_ctx, body, atmosphere) = compute_upstream(
+        &args.star,
+        args.planet,
+        args.seed,
+        args.enable_biology,
+        &empty_overrides,
+    )?;
+
+    println!("[4/7] skeleton (subdivision = {})...", args.subdivision);
+    let skeleton = compute_skeleton(
         body.clone(),
         atmosphere.clone(),
         args.subdivision,
         args.seed,
-    );
+        &empty_overrides,
+    )?;
 
-    println!("[6/7] persisting world to {}", args.output.display());
+    println!("[5/7] persisting world to {}", args.output.display());
     let wd = WorldDirectory::create(&args.output).map_err(|e| {
         format!(
             "failed to create world dir {}: {}",
@@ -321,17 +483,10 @@ fn run_generate(args: &GenerateArgs) -> Result<(), String> {
     ];
 
     println!(
-        "[7/7] rendering elevation preview ({}x{})...",
+        "[6/7] rendering elevation preview ({}x{})...",
         args.preview_width, args.preview_height
     );
-    let render_cfg = GlobeRenderConfig {
-        width: args.preview_width,
-        height: args.preview_height,
-        background: [0, 0, 0],
-    };
-    let preview_path = wd.root.join("preview.png");
-    render_skeleton_mollweide_to_path(&skeleton, &render_cfg, &preview_path)
-        .map_err(|e| format!("failed to write preview {}: {}", preview_path.display(), e))?;
+    render_elevation_preview(&wd, &skeleton, args.preview_width, args.preview_height)?;
 
     // Phase 2 stages: climate + biomes. Run in order unless user opted out.
     let mut climate: Option<ClimateMap> = None;
@@ -339,7 +494,7 @@ fn run_generate(args: &GenerateArgs) -> Result<(), String> {
 
     if !args.skip_climate {
         println!("[climate] building ClimateMap...");
-        let c = ClimateMap::build(&skeleton, &ClimateConfig::default());
+        let c = compute_climate(&skeleton, &empty_overrides)?;
         save_climate(&wd, &c)?;
         stages_computed.push("climate".to_string());
         climate = Some(c);
@@ -347,27 +502,15 @@ fn run_generate(args: &GenerateArgs) -> Result<(), String> {
         if !args.skip_biomes {
             println!("[biomes] building BiomeMap...");
             let climate_ref = climate.as_ref().expect("climate just computed");
-            let b = BiomeMap::build(&skeleton, climate_ref, &BiomeMapConfig::default());
+            let b = compute_biomes(&skeleton, climate_ref, &empty_overrides)?;
             save_biomes(&wd, &b)?;
             stages_computed.push("biomes".to_string());
 
             println!(
-                "[biomes] rendering biome preview ({}x{})...",
+                "[7/7] rendering biome preview ({}x{})...",
                 args.preview_width, args.preview_height
             );
-            let biome_cfg = BiomeRenderConfig {
-                width: args.preview_width,
-                height: args.preview_height,
-            };
-            let biome_preview_path = wd.root.join("preview_biome.png");
-            let img = render_biome_mollweide(&skeleton, &b, &biome_cfg);
-            img.save(&biome_preview_path).map_err(|e| {
-                format!(
-                    "failed to write biome preview {}: {}",
-                    biome_preview_path.display(),
-                    e
-                )
-            })?;
+            render_biome_preview(&wd, &skeleton, &b, args.preview_width, args.preview_height)?;
             biomes = Some(b);
         }
     }
@@ -401,6 +544,204 @@ fn run_generate(args: &GenerateArgs) -> Result<(), String> {
         biomes.as_ref(),
         &args.output,
     );
+    Ok(())
+}
+
+/// Resolved arguments for the `regenerate` subcommand.
+struct RegenerateArgs {
+    world: PathBuf,
+    overrides: PathBuf,
+    preview_width: u32,
+    preview_height: u32,
+}
+
+/// Compute the set of dirty stages from the override file via CORE-05's
+/// dependency graph. Each override in `StageOverrides` targets a specific
+/// pipeline stage; applying an override at stage N marks N and all downstream
+/// stages dirty.
+fn dirty_stages_from_overrides(overrides: &StageOverrides) -> PipelineDirtyState {
+    let mut state = PipelineDirtyState::clean();
+    if overrides.orbital_body.is_some() {
+        state.mark_override_at(Stage::PlanetarySystem);
+    }
+    if overrides.atmosphere.is_some() {
+        state.mark_override_at(Stage::Atmosphere);
+    }
+    if overrides.skeleton.is_some() {
+        state.mark_override_at(Stage::Skeleton);
+    }
+    if overrides.climate.is_some() {
+        state.mark_override_at(Stage::Climate);
+    }
+    if overrides.biome.is_some() {
+        state.mark_override_at(Stage::Biome);
+    }
+    state
+}
+
+/// Recompute only the stages marked dirty by an override file, re-using
+/// clean stage artifacts verbatim.
+///
+/// The flow:
+/// 1. Load the existing manifest.
+/// 2. Parse the override file.
+/// 3. Compute the dirty-stage set via CORE-05's dependency graph.
+/// 4. For each stage in order: recompute if dirty, otherwise load from disk.
+/// 5. Persist newly-computed artifacts in place (clean files remain
+///    byte-identical on disk since we don't touch them).
+/// 6. Rewrite the manifest with the new `overrides_file` pointer.
+fn run_regenerate(args: &RegenerateArgs) -> Result<(), String> {
+    let wd = WorldDirectory {
+        root: args.world.clone(),
+    };
+    if !wd.manifest_path().exists() {
+        return Err(format!(
+            "manifest.json not found in {} (is this a ymir world directory?)",
+            args.world.display()
+        ));
+    }
+
+    let mut manifest = wd.load_manifest().map_err(|e| {
+        format!(
+            "failed to load manifest at {}: {}",
+            wd.manifest_path().display(),
+            e
+        )
+    })?;
+
+    let override_file = OverrideFile::load(&args.overrides).map_err(|e| {
+        format!(
+            "failed to load overrides {}: {}",
+            args.overrides.display(),
+            e
+        )
+    })?;
+
+    let overrides = &override_file.overrides;
+    let dirty = dirty_stages_from_overrides(overrides);
+    let dirty_names: Vec<&str> = dirty.dirty_stages().iter().map(|s| s.name()).collect();
+    println!(
+        "regenerate: override target_star={}, dirty stages: [{}]",
+        override_file.target_star,
+        dirty_names.join(", ")
+    );
+
+    let star_name = &manifest.star_name;
+    let seed = manifest.seed;
+    let planet_index = manifest.planet_index;
+    let subdivision = manifest.config.grid_subdivision_level;
+    let enable_biology = manifest.config.enable_biology;
+
+    // --- Upstream stages (1-3): stellar, system, atmosphere. --------------
+    //
+    // These all live inside skeleton.bin (there is no separate stellar.bin /
+    // system.bin / atmosphere.bin in Phase 2). If none of stages 1-3 are
+    // dirty AND skeleton itself is clean, we can skip recomputing them
+    // entirely by loading skeleton.bin and extracting body + atmosphere.
+    let need_upstream = dirty.is_dirty(Stage::PlanetarySystem)
+        || dirty.is_dirty(Stage::Atmosphere)
+        || dirty.is_dirty(Stage::Skeleton);
+
+    let loaded_skeleton: Option<SkeletonWorld> = if !need_upstream
+        || (!dirty.is_dirty(Stage::Skeleton)
+            && !dirty.is_dirty(Stage::PlanetarySystem)
+            && !dirty.is_dirty(Stage::Atmosphere))
+    {
+        // When skeleton itself is clean, just load it.
+        Some(load_skeleton(&wd)?)
+    } else {
+        None
+    };
+
+    let skeleton = if let Some(s) = loaded_skeleton {
+        println!("[skeleton] clean: loaded from disk");
+        s
+    } else {
+        // Recompute upstream. lookup_star uses the manifest's recorded star
+        // name so we recover the same StarContext. When only atmosphere is
+        // dirty (stages 1-2 clean), we still rebuild body/atmosphere; that's
+        // acceptable because the upstream types don't live on disk and their
+        // outputs are deterministic given the manifest's seed+star+planet.
+        let (_star_ctx, body, atmosphere) =
+            compute_upstream(star_name, planet_index, seed, enable_biology, overrides)?;
+        println!(
+            "[skeleton] rebuilding (atmosphere class = {:?})...",
+            atmosphere.class
+        );
+        let skel = compute_skeleton(body, atmosphere, subdivision, seed, overrides)?;
+        save_skeleton(&wd, &skel)?;
+        render_elevation_preview(&wd, &skel, args.preview_width, args.preview_height)?;
+        skel
+    };
+
+    // --- Climate (stage 5). ------------------------------------------------
+    let climate: Option<ClimateMap> = if manifest.stages_computed.iter().any(|s| s == "climate") {
+        if dirty.is_dirty(Stage::Climate) {
+            println!("[climate] dirty: recomputing...");
+            let c = compute_climate(&skeleton, overrides)?;
+            save_climate(&wd, &c)?;
+            Some(c)
+        } else {
+            println!("[climate] clean: loading from disk");
+            Some(load_climate(&wd)?)
+        }
+    } else {
+        None
+    };
+
+    // --- Biomes (stage 6). -------------------------------------------------
+    let biomes: Option<BiomeMap> = if manifest.stages_computed.iter().any(|s| s == "biomes") {
+        if let Some(climate_ref) = climate.as_ref() {
+            if dirty.is_dirty(Stage::Biome) {
+                println!("[biomes] dirty: recomputing...");
+                let b = compute_biomes(&skeleton, climate_ref, overrides)?;
+                save_biomes(&wd, &b)?;
+                render_biome_preview(&wd, &skeleton, &b, args.preview_width, args.preview_height)?;
+                Some(b)
+            } else {
+                println!("[biomes] clean: loading from disk");
+                Some(load_biomes(&wd)?)
+            }
+        } else {
+            // Biomes recorded but no climate; shouldn't happen in practice.
+            None
+        }
+    } else {
+        None
+    };
+
+    // --- Manifest update. --------------------------------------------------
+    //
+    // `stages_computed` stays the same (we regenerate the same set of
+    // stages the original `generate` produced). The new `overrides_file`
+    // pointer records which override file drove this regeneration.
+    manifest.overrides_file = Some(args.overrides.display().to_string());
+    wd.save_manifest(&manifest)
+        .map_err(|e| format!("failed to save manifest: {e}"))?;
+
+    println!();
+    println!(
+        "Regenerate complete. Overrides applied: [{}]",
+        dirty_names.join(", ")
+    );
+    println!("Manifest updated at {}", wd.manifest_path().display());
+    println!(
+        "Skeleton: {} tiles, atmosphere class {:?}",
+        skeleton.elevation.elevations_m.len(),
+        skeleton.atmosphere.class
+    );
+    if let Some(c) = climate.as_ref() {
+        println!(
+            "Climate: mean T {:.1} K, min {:.1}, max {:.1}",
+            c.temperature.mean(),
+            c.temperature.min(),
+            c.temperature.max()
+        );
+    }
+    if let Some(b) = biomes.as_ref() {
+        println!("Biomes: {} tiles", b.len());
+    }
+
     Ok(())
 }
 
@@ -984,5 +1325,116 @@ mod tests {
         let a = args(1, tmp.path().join("w"), 999);
         let err = run_generate(&a).unwrap_err();
         assert!(err.contains("out of range"), "unexpected error: {err}");
+    }
+
+    // --- Regenerate helpers -------------------------------------------------
+
+    #[test]
+    fn dirty_stages_empty_overrides_all_clean() {
+        let dirty = dirty_stages_from_overrides(&StageOverrides::default());
+        assert!(dirty.dirty_stages().is_empty());
+    }
+
+    #[test]
+    fn dirty_stages_atmosphere_override_marks_3_through_7() {
+        let overrides = StageOverrides {
+            atmosphere: Some(serde_json::json!({})),
+            ..Default::default()
+        };
+        let dirty = dirty_stages_from_overrides(&overrides);
+        assert!(!dirty.is_dirty(Stage::StellarContext));
+        assert!(!dirty.is_dirty(Stage::PlanetarySystem));
+        assert!(dirty.is_dirty(Stage::Atmosphere));
+        assert!(dirty.is_dirty(Stage::Skeleton));
+        assert!(dirty.is_dirty(Stage::Climate));
+        assert!(dirty.is_dirty(Stage::Biome));
+        assert!(dirty.is_dirty(Stage::RegionalDetail));
+    }
+
+    #[test]
+    fn dirty_stages_biome_override_marks_only_6_and_7() {
+        let overrides = StageOverrides {
+            biome: Some(serde_json::json!({})),
+            ..Default::default()
+        };
+        let dirty = dirty_stages_from_overrides(&overrides);
+        for stage in [
+            Stage::StellarContext,
+            Stage::PlanetarySystem,
+            Stage::Atmosphere,
+            Stage::Skeleton,
+            Stage::Climate,
+        ] {
+            assert!(!dirty.is_dirty(stage), "{stage:?} should be clean");
+        }
+        assert!(dirty.is_dirty(Stage::Biome));
+        assert!(dirty.is_dirty(Stage::RegionalDetail));
+    }
+
+    #[test]
+    fn dirty_stages_orbital_body_override_marks_2_through_7() {
+        let overrides = StageOverrides {
+            orbital_body: Some(serde_json::json!({})),
+            ..Default::default()
+        };
+        let dirty = dirty_stages_from_overrides(&overrides);
+        assert!(!dirty.is_dirty(Stage::StellarContext));
+        for stage in [
+            Stage::PlanetarySystem,
+            Stage::Atmosphere,
+            Stage::Skeleton,
+            Stage::Climate,
+            Stage::Biome,
+            Stage::RegionalDetail,
+        ] {
+            assert!(dirty.is_dirty(stage), "{stage:?} should be dirty");
+        }
+    }
+
+    #[test]
+    fn merge_json_replaces_scalar_fields() {
+        let mut target = serde_json::json!({"a": 1, "b": 2});
+        let patch = serde_json::json!({"b": 5});
+        merge_json(&mut target, &patch);
+        assert_eq!(target, serde_json::json!({"a": 1, "b": 5}));
+    }
+
+    #[test]
+    fn merge_json_deep_merges_nested_objects() {
+        let mut target = serde_json::json!({
+            "outer": {"x": 1, "y": 2},
+            "leave_alone": 99
+        });
+        let patch = serde_json::json!({"outer": {"y": 42, "z": 7}});
+        merge_json(&mut target, &patch);
+        assert_eq!(
+            target,
+            serde_json::json!({
+                "outer": {"x": 1, "y": 42, "z": 7},
+                "leave_alone": 99
+            })
+        );
+    }
+
+    #[test]
+    fn apply_json_override_changes_named_field() {
+        #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+        struct Foo {
+            a: i32,
+            b: String,
+        }
+        let base = Foo {
+            a: 1,
+            b: "hi".to_string(),
+        };
+        let patch = serde_json::json!({"a": 42});
+        let out = apply_json_override(&base, &patch).expect("apply ok");
+        assert_eq!(
+            out,
+            Foo {
+                a: 42,
+                b: "hi".to_string()
+            }
+        );
     }
 }

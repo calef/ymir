@@ -1389,6 +1389,8 @@ dependencies = [
  "bincode",
  "chrono",
  "clap",
+ "serde",
+ "serde_json",
  "tempfile",
  "ymir-atmosphere",
  "ymir-biome",
