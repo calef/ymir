@@ -1,0 +1,11 @@
+[package]
+name = "ymir-atmosphere"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Atmospheric modeling: retention, composition, and greenhouse effect calculations"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+ymir-core = { path = "../ymir-core" }
+ymir-system = { path = "../ymir-system" }

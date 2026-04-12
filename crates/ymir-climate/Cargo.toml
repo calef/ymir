@@ -1,0 +1,12 @@
+[package]
+name = "ymir-climate"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Global climate simulation: temperature, moisture, and wind field computation"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+ymir-core = { path = "../ymir-core" }
+ymir-surface = { path = "../ymir-surface" }
+ymir-atmosphere = { path = "../ymir-atmosphere" }

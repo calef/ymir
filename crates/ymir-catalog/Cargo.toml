@@ -1,0 +1,10 @@
+[package]
+name = "ymir-catalog"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Stellar catalog ingestion from Gaia DR3 and the NASA Exoplanet Archive"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+ymir-core = { path = "../ymir-core" }

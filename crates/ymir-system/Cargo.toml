@@ -1,0 +1,11 @@
+[package]
+name = "ymir-system"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Planetary system generation: orbital placement, bulk properties, and tidal modeling"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+ymir-core = { path = "../ymir-core" }
+ymir-catalog = { path = "../ymir-catalog" }

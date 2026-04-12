@@ -1,0 +1,11 @@
+[package]
+name = "ymir-biome"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Biome classification and palette assignment from climate data"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+ymir-core = { path = "../ymir-core" }
+ymir-climate = { path = "../ymir-climate" }

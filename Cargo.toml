@@ -1,0 +1,34 @@
+[workspace]
+members = [
+    "crates/ymir-core",
+    "crates/ymir-catalog",
+    "crates/ymir-system",
+    "crates/ymir-atmosphere",
+    "crates/ymir-surface",
+    "crates/ymir-climate",
+    "crates/ymir-biome",
+    "crates/ymir-detail",
+    "crates/ymir-render",
+    "crates/ymir-storage",
+]
+resolver = "3"
+
+[package]
+name = "ymir"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "A causal star-to-surface planet simulator grounded in real astronomical data"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+ymir-core = { path = "crates/ymir-core" }
+ymir-catalog = { path = "crates/ymir-catalog" }
+ymir-system = { path = "crates/ymir-system" }
+ymir-atmosphere = { path = "crates/ymir-atmosphere" }
+ymir-surface = { path = "crates/ymir-surface" }
+ymir-climate = { path = "crates/ymir-climate" }
+ymir-biome = { path = "crates/ymir-biome" }
+ymir-detail = { path = "crates/ymir-detail" }
+ymir-render = { path = "crates/ymir-render" }
+ymir-storage = { path = "crates/ymir-storage" }

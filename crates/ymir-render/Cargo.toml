@@ -1,0 +1,14 @@
+[package]
+name = "ymir-render"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "2D map rendering: globe projections, detail views, and overlay compositing"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+image = "0.25"
+ymir-core = { path = "../ymir-core" }
+ymir-surface = { path = "../ymir-surface" }
+ymir-climate = { path = "../ymir-climate" }
+ymir-biome = { path = "../ymir-biome" }

@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+title: "Ymir: Causal star-to-surface planet simulation toolkit"
+message: "If you use this software in research, please cite it as below."
+type: software
+authors:
+  - family-names: Alef
+    given-names: Christopher
+license:
+  - MIT
+  - Apache-2.0
+keywords:
+  - exoplanets
+  - procedural generation
+  - habitable zones
+  - planetary science
+  - climate simulation
