@@ -8,4 +8,7 @@ pub mod moisture;
 pub mod temperature;
 pub mod wind;
 
+pub use climate_field::{ClimateConfig, ClimateMap};
+pub use moisture::{MoistureConfig, MoistureField, build_moisture_field};
 pub use temperature::{TemperatureConfig, TemperatureField, build_temperature_field};
+pub use wind::{WindConfig, WindField, WindVector, build_wind_field};

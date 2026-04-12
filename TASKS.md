@@ -290,7 +290,7 @@ NOTE: `ymir-atmosphere` added as direct dep to ymir-biome because `palette_for` 
 
 ### CLIM-02: Moisture field
 - **Crate:** ymir-climate
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** CLIM-01
 - **Blocked:** no
 - **Assignee:** agent
@@ -299,7 +299,7 @@ NOTE: `ymir-atmosphere` added as direct dep to ymir-biome because `palette_for` 
 
 ### CLIM-03: Wind model
 - **Crate:** ymir-climate
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** CLIM-01
 - **Blocked:** no
 - **Assignee:** agent
@@ -308,19 +308,21 @@ NOTE: `ymir-atmosphere` added as direct dep to ymir-biome because `palette_for` 
 
 ### CLIM-04: ClimateMap and SkeletonWorld integration
 - **Crate:** ymir-climate
-- **Status:** pending
+- **Status:** in-progress
 - **Depends on:** CLIM-01, CLIM-02, CLIM-03
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 `ClimateMap { temperature, moisture, wind }` struct. `ClimateMap::build(&SkeletonWorld) -> Self` runs all three fields in the right order (temperature → wind → moisture, since moisture needs wind). Serializable. Tests: build is deterministic; round-trips through bincode.
 
 ### BIOME-02: Whittaker classification
 - **Crate:** ymir-biome
-- **Status:** pending
-- **Depends on:** BIOME-01, CLIM-04
+- **Status:** in-progress
+- **Depends on:** BIOME-01
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
+
+NOTE: Dependency on CLIM-04 relaxed — BIOME-02 takes raw (temperature_k, humidity, palette) and returns a Biome. The ClimateMap composite is not required; BIOME-04 will wire things together.
 
 Temperature × moisture → Biome lookup, returning only biomes in the active palette. Earth-palette lookup calibrated against a standard Whittaker diagram. Abiotic palettes use simpler physical-state maps. Tests: Earth-palette (hot, wet) → tropical forest; (cold, dry) → tundra; Mars-palette maps (any, any) to a small abiotic set.
 

@@ -13,3 +13,4 @@ ymir-atmosphere = { path = "../ymir-atmosphere" }
 
 [dev-dependencies]
 ymir-system = { path = "../ymir-system" }
+bincode = "1"
