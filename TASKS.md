@@ -308,7 +308,7 @@ NOTE: `ymir-atmosphere` added as direct dep to ymir-biome because `palette_for` 
 
 ### CLIM-04: ClimateMap and SkeletonWorld integration
 - **Crate:** ymir-climate
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** CLIM-01, CLIM-02, CLIM-03
 - **Blocked:** no
 - **Assignee:** agent
@@ -423,10 +423,12 @@ NOTE: Implemented via Option A (full CLI invocation) as `tests/valid_tidally_loc
 
 ### VALID-04: Override progression test
 - **Crate:** ymir (binary, integration tests)
-- **Status:** ready
+- **Status:** done
 - **Depends on:** CLI-03
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 Integration test: generate world A, save; apply an atmosphere-stage override; regenerate; confirm atmosphere, skeleton, climate, biome artifacts changed but star/system artifacts are byte-identical.
+
+NOTE (implementation): Implemented as `tests/valid_override_progression.rs` using a **climate-stage override** (Option A) rather than an atmosphere override, for two reasons. First, the Phase 2 persistence layout bundles stellar + system + atmosphere into `skeleton.bin` (there is no standalone `stellar.bin` / `system.bin`), so the brief's "star/system artifacts byte-identical while atmosphere/skeleton change" cannot be expressed directly; an atmosphere override rebuilds skeleton.bin along with everything downstream. Second, a climate override cleanly verifies the dirty-propagation contract: `skeleton.bin` and `preview.png` stay byte-identical, while `climate.bin`, `biomes.bin`, and `preview_biome.png` all change. To force a real content change (the merge path replaces arrays wholesale, but an empty `{"climate": {}}` would round-trip identically), the test loads the freshly-generated `ClimateMap`, shifts every per-tile temperature by +50 K, and writes the shifted map as the climate override JSON. Earth smoke (seed=1, subdivision=5): skeleton.bin = 1_768_717 bytes byte-identical before/after; climate.bin = 245_836 bytes before and after (same length, different bytes); biomes.bin and preview_biome.png both differ as expected since +50 K pushes many tiles across Whittaker bands. Test runtime ~13 s in release. Asserts also that the reloaded climate.bin carries the shifted temperatures to guard against silent merge regressions.
 
