@@ -12,3 +12,9 @@ ymir-core = { path = "../ymir-core" }
 ymir-surface = { path = "../ymir-surface" }
 ymir-climate = { path = "../ymir-climate" }
 ymir-biome = { path = "../ymir-biome" }
+
+[dev-dependencies]
+tempfile = "3"
+ymir-atmosphere = { path = "../ymir-atmosphere" }
+ymir-catalog = { path = "../ymir-catalog" }
+ymir-system = { path = "../ymir-system" }

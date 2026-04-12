@@ -213,7 +213,7 @@ Serialize/deserialize world manifest (star context, body params, config, seed, o
 
 ### REND-01: Mollweide projection to PNG
 - **Crate:** ymir-render
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** SURF-03
 - **Blocked:** no
 - **Assignee:** agent
@@ -222,10 +222,10 @@ Software rasterizer using the `image` crate. Mollweide equal-area projection. Co
 
 ### CLI-01: `ymir generate` command
 - **Crate:** ymir (binary)
-- **Status:** pending
+- **Status:** in-progress
 - **Depends on:** CAT-01, SYS-01, SYS-02, ATMO-01, ATMO-02, SURF-03, STOR-01, REND-01
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 Wire up the full pipeline via clap CLI. `ymir generate --star "Tau Ceti" --seed 42 --output worlds/tau_ceti_42/` produces skeleton data on disk and Mollweide PNG. Per design doc section 7.5.
 

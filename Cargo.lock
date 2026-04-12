@@ -1352,10 +1352,14 @@ version = "0.1.0"
 dependencies = [
  "image",
  "serde",
+ "tempfile",
+ "ymir-atmosphere",
  "ymir-biome",
+ "ymir-catalog",
  "ymir-climate",
  "ymir-core",
  "ymir-surface",
+ "ymir-system",
 ]
 
 [[package]]
