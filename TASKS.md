@@ -434,3 +434,148 @@ Integration test: generate world A, save; apply an atmosphere-stage override; re
 
 NOTE (implementation): Implemented as `tests/valid_override_progression.rs` using a **climate-stage override** (Option A) rather than an atmosphere override, for two reasons. First, the Phase 2 persistence layout bundles stellar + system + atmosphere into `skeleton.bin` (there is no standalone `stellar.bin` / `system.bin`), so the brief's "star/system artifacts byte-identical while atmosphere/skeleton change" cannot be expressed directly; an atmosphere override rebuilds skeleton.bin along with everything downstream. Second, a climate override cleanly verifies the dirty-propagation contract: `skeleton.bin` and `preview.png` stay byte-identical, while `climate.bin`, `biomes.bin`, and `preview_biome.png` all change. To force a real content change (the merge path replaces arrays wholesale, but an empty `{"climate": {}}` would round-trip identically), the test loads the freshly-generated `ClimateMap`, shifts every per-tile temperature by +50 K, and writes the shifted map as the climate override JSON. Earth smoke (seed=1, subdivision=5): skeleton.bin = 1_768_717 bytes byte-identical before/after; climate.bin = 245_836 bytes before and after (same length, different bytes); biomes.bin and preview_biome.png both differ as expected since +50 K pushes many tiles across Whittaker bands. Test runtime ~13 s in release. Asserts also that the reloaded climate.bin carries the shifted temperatures to guard against silent merge regressions.
 
+---
+
+## Phase 3: Regional detail
+
+Per design doc section 5.7: on-demand high-resolution generation for a region of the skeleton. Implements stage 7 of the 7-stage pipeline. Also folds in three deferred pieces from Phase 2 (Earth continental_fraction override, water-biome overlay, unified SkeletonTile view) that were flagged in implementation NOTEs.
+
+### CAT-04: Earth continental_fraction override
+- **Crate:** ymir (binary) + ymir-surface
+- **Status:** ready
+- **Depends on:** CAT-03, SURF-03
+- **Blocked:** no
+- **Assignee:**
+
+Wire a `continental_fraction` observational override through `earth_body()` in `src/main.rs` and through the skeleton stage so Earth generates with ~29% land. The heightmap currently ignores any such override; extend `HeightmapConfig` (or the equivalent) to accept an optional continental-fraction target and calibrate the elevation threshold to hit it. Also wire Mars to a ~100% land target (it's land-dominated already, but explicit is better). Tests: Earth mean ocean-tile fraction within 5 pp of 0.71; Mars land-tile fraction ≥ 0.98. Update VALID-01's deferred ocean assertion to assert on the actual continental_fraction once BIOME-05 lands.
+
+### BIOME-05: Water-biome overlay
+- **Crate:** ymir-biome
+- **Status:** ready
+- **Depends on:** BIOME-04, CAT-04
+- **Blocked:** no
+- **Assignee:**
+
+Post-Whittaker overlay pass that paints Ocean, CoastalShallow, Wetland, and AlpineMeadow biomes from skeleton elevation and climate. Rules (first approximation):
+- Elevation < sea level → Ocean (deep) or CoastalShallow (shallow / depth < ~200 m).
+- Elevation just above sea level with humidity > ~0.7 → Wetland.
+- Elevation above the snow line with moderate moisture → AlpineMeadow (Earth-like palette only).
+Runs between Whittaker classification and Markov smoothing inside `BiomeMap::build`, or as an additional pass exposed via `BiomeMapConfig`. Non-Earth palettes should leave these biomes unused (they're already in the palette membership tables from BIOME-01). Tests: Earth with continental_fraction 0.29 yields ≥60% Ocean+CoastalShallow tiles; Mars yields 0 water biomes. Update VALID-01 to re-enable the Ocean assertion.
+
+### SURF-04: Unified SkeletonTile view
+- **Crate:** ymir-surface
+- **Status:** ready
+- **Depends on:** SURF-03
+- **Blocked:** no
+- **Assignee:**
+
+Consolidate `ElevationMap` + `TectonicData` + grid neighbor lookups into a `SkeletonTile` accessor (`world.tile(idx) -> SkeletonTile { lat, lon, elevation_m, plate_id, plate_type, neighbors: &[usize] }`). Phase 2 NOTE deferred this; Phase 3 regional detail needs quick per-tile access across three data sources during region extraction. Implement as a view struct (zero-copy where possible) so it doesn't duplicate storage. Tests: accessor returns consistent values with the underlying maps; neighbor lists match `GeodesicGrid`.
+
+### DET-01: Region specification and PRNG derivation
+- **Crate:** ymir-detail
+- **Status:** ready
+- **Depends on:** CORE-02, SURF-04
+- **Blocked:** no
+- **Assignee:**
+
+`RegionSpec { tile_index: u32, radius_tiles: u32 }` identifying a contiguous neighborhood of skeleton tiles to generate detail for. Radius-0 is a single tile (not generally useful); radius-1 is a tile plus its ~6 neighbors. Include a deterministic PRNG factory: `detail_rng(world_seed: u64, tile_index: u32) -> PcgRng` using `hash(world_seed, tile_index)` per design doc §5.7. Tests: same (seed, tile_index) yields the same RNG sequence; different inputs diverge.
+
+### DET-02: Hex subgrid generation
+- **Crate:** ymir-detail
+- **Status:** pending
+- **Depends on:** DET-01
+- **Blocked:** no
+- **Assignee:**
+
+Generate a hex grid covering a `RegionSpec`. Fixed subdivision (e.g. 32×32 hexes per skeleton tile in the initial pass). Handle the gnomonic projection from the skeleton-tile local frame to a planar hex grid; document the distortion bound. Serializable. Tests: hex count matches expected formula; every hex has a well-defined (lat, lon); neighbor relationships are consistent across shared edges between adjacent skeleton tiles.
+
+### DET-03: Fractal-perturbed elevation
+- **Crate:** ymir-detail
+- **Status:** pending
+- **Depends on:** DET-02
+- **Blocked:** no
+- **Assignee:**
+
+Per-hex elevation = skeleton-tile baseline + FBM noise at detail scale. Reuse `ymir_surface::noise::spherical_fbm` seeded from the detail RNG. Boundary handling: elevation at shared edges between adjacent skeleton tiles must match across the seam (blend from baseline at tile centers to shared value at boundary). Tests: determinism; cross-tile seam continuity (max |dH| across seam < threshold); perturbation magnitude bounded by gravity-scaled cap.
+
+### DET-04: Orographic moisture refinement
+- **Crate:** ymir-detail
+- **Status:** pending
+- **Depends on:** DET-03
+- **Blocked:** no
+- **Assignee:**
+
+Local humidity = skeleton-tile moisture baseline + orographic lift/shadow from the wind field. Use prevailing wind at the region; advect moisture uphill (saturation → precipitation → downwind dry shadow). Simpler first pass: humidity *= f(upwind elevation gradient). Tests: windward slopes wetter than leeward slopes at equal elevation; humidity stays in [0, saturation_ceiling].
+
+### DET-05: River flow accumulation + lake formation
+- **Crate:** ymir-detail
+- **Status:** pending
+- **Depends on:** DET-03
+- **Blocked:** no
+- **Assignee:**
+
+Flow-accumulation algorithm on the hex grid using D8-equivalent (D6 for hexes) steepest-descent. Fill local minima into lakes via priority-flood or Planchon-Darboux. Emit per-hex `flow_accumulation: f32` and `is_lake: bool` fields. Rivers are implicit (hexes with accumulation > threshold). Tests: no hex flows uphill; every drainage basin has exactly one outlet (or terminates in a lake); total water volume conserved up to numerical tolerance.
+
+### DET-06: Fine-grained biome refinement
+- **Crate:** ymir-detail
+- **Status:** pending
+- **Depends on:** DET-04, DET-05, BIOME-03
+- **Blocked:** no
+- **Assignee:**
+
+Classify each hex via the same Whittaker logic (BIOME-02) using refined local T/humidity, then apply Markov smoothing (BIOME-03) at detail scale. Rivers (flow_accumulation > threshold) become distinct river-channel biomes or bias neighbors toward Wetland. Lakes get the water-body biome. Boundary condition: detail biomes at the region edge should agree with the parent skeleton tile's biome within tolerance (same palette, same-family biome). Tests: palette membership; lake hexes are water-body; river hexes follow descending elevation gradient.
+
+### DET-07: RegionalDetail composite
+- **Crate:** ymir-detail
+- **Status:** pending
+- **Depends on:** DET-02, DET-03, DET-04, DET-05, DET-06
+- **Blocked:** no
+- **Assignee:**
+
+`RegionalDetail { spec, hex_grid, elevation, moisture, flow, biomes }` capstone. `RegionalDetail::build(&SkeletonWorld, &ClimateMap, &BiomeMap, spec, cfg)` orchestrates DET-02..06. Serializable. Tests: determinism; serde round-trip; boundary consistency with parent skeleton tile; same-region regeneration is byte-identical.
+
+### STOR-03: Per-region persistence
+- **Crate:** ymir-storage + ymir (binary)
+- **Status:** pending
+- **Depends on:** DET-07
+- **Blocked:** no
+- **Assignee:**
+
+Persist regional details to `<world>/detail/region_NNNN.bin` (design doc §6.2). Update manifest to track which regions have been generated (e.g. `regions_generated: Vec<u32>`). Reuse `save_bin`/`load_bin`. Tests: save then load round-trips a `RegionalDetail`; manifest update is idempotent.
+
+### REND-03: Regional detail renderer
+- **Crate:** ymir-render
+- **Status:** pending
+- **Depends on:** DET-07
+- **Blocked:** no
+- **Assignee:**
+
+Render a `RegionalDetail` to a high-res PNG: hex grid rasterized with biome-colored fill, elevation-shaded (hillshade), river/lake overlay. Separate entry point from the Mollweide renderers. Consider a stereographic or orthographic local projection centered on the region. Tests: output dimensions; biome palette visible; river hexes distinguishable.
+
+### CLI-05: `ymir detail` command
+- **Crate:** ymir (binary)
+- **Status:** pending
+- **Depends on:** DET-07, STOR-03, REND-03
+- **Blocked:** no
+- **Assignee:**
+
+`ymir detail --world PATH --region TILE_INDEX [--radius N] [--output-image FILE]` generates regional detail for the specified tile, persists to `detail/region_NNNN.bin`, and optionally renders a PNG. Update the manifest's regions-generated list. Stdout summary: hex count, elevation range, biome histogram, river/lake counts. Tests: command succeeds on an Earth world; re-running with the same region produces byte-identical output.
+
+### VALID-05: Regional determinism test
+- **Crate:** ymir (binary, integration tests)
+- **Status:** pending
+- **Depends on:** CLI-05
+- **Blocked:** no
+- **Assignee:**
+
+Integration test: generate an Earth world, run `ymir detail --region 100 --region 200 --region 300`, re-run in a fresh tempdir, assert all three region bin files are byte-identical across runs. Proves `hash(world_seed, tile_index)` seeding is stable.
+
+### VALID-06: River plausibility test
+- **Crate:** ymir (binary, integration tests)
+- **Status:** pending
+- **Depends on:** CLI-05
+- **Blocked:** no
+- **Assignee:**
+
+Integration test: generate an Earth world, pick a region known to contain a continent (non-zero land fraction), run `ymir detail`. Assert: (a) for every hex with `flow_accumulation > 0`, the downstream hex has strictly lower elevation — no uphill flow; (b) each hex's flow path terminates in a lake or at the region boundary within N steps; (c) at least one basin (flow accumulation > threshold) exists.
+
