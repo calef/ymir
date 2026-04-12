@@ -193,10 +193,12 @@ Poisson-seeded flood fill for plate assignment. Boundary classification (converg
 
 ### SURF-03: Heightmap generation
 - **Crate:** ymir-surface
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** SURF-02, ATMO-02
 - **Blocked:** no
 - **Assignee:** agent
+
+NOTE: SkeletonWorld omits a dedicated SkeletonTile view; per-tile elevation lives in ElevationMap and per-tile plate assignment in TectonicData. Unified tile view deferred until a downstream stage needs it.
 
 Tectonic bias field + spherical fractal noise. Noise amplitude scaled by gravity. Mountain height cap from yield strength / (density * g). Tests: lower-gravity planet has higher max elevation. `SkeletonWorld` struct. Per design doc section 5.4.
 
@@ -211,10 +213,10 @@ Serialize/deserialize world manifest (star context, body params, config, seed, o
 
 ### REND-01: Mollweide projection to PNG
 - **Crate:** ymir-render
-- **Status:** pending
+- **Status:** in-progress
 - **Depends on:** SURF-03
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 Software rasterizer using the `image` crate. Mollweide equal-area projection. Color by elevation for Phase 1. Output PNG file. No wgpu; that's Phase 6.
 
