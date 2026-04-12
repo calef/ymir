@@ -233,10 +233,10 @@ Wire up the full pipeline via clap CLI. `ymir generate --star "Tau Ceti" --seed 
 
 ### SYS-03: Rocky/volatile branch selection in placement
 - **Crate:** ymir-system
-- **Status:** ready
+- **Status:** done
 - **Depends on:** SYS-01, SYS-02
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 Tau Ceti e, h, and f all have RV-only minimum-mass data. Current pipeline feeds those into the M→R inverse, which lands on the volatile branch, producing three 2.24 R_earth sub-Neptunes. Real-world consensus treats e and f as rocky candidates. Add a rocky-branch override: when the catalogued minimum mass is below the rocky/volatile threshold (~4 M_earth), force the rocky branch even though the inverse would pick volatile. Keep the volatile branch for objects where catalog mass is clearly above threshold. Phase 2 scope.
 
@@ -248,3 +248,169 @@ Tau Ceti e, h, and f all have RV-only minimum-mass data. Current pipeline feeds 
 - **Assignee:** agent
 
 Print summary of a generated world: star properties, planet properties, atmosphere, provenance stats. Per design doc section 7.5.
+
+---
+
+## Phase 2: Climate, biomes, and override system
+
+Design reference: `ymir-design.md` sections 5.5, 5.6, 11 (Phase 2). Deliverable per design doc: globe PNGs with biome coloring that look recognizably different for Earth-like vs Mars-like vs tidally locked worlds; `ymir regenerate` recomputes only dirty stages after an override is applied.
+
+### CAT-03: Hardcoded Earth and Mars catalog data
+- **Crate:** ymir-catalog
+- **Status:** done
+- **Depends on:** CAT-01, CAT-02
+- **Blocked:** no
+- **Assignee:** agent
+
+NOTE: `earth_body()` and `mars_body()` live in the binary crate (`src/main.rs`) rather than `ymir-catalog`, because putting them in catalog would require a catalog→system dependency that violates the crate dependency graph. `sol_context()` stays in catalog.
+
+Add `earth_context()` / `mars_context()` (Sol StarContext variants) and `earth_body()` / `mars_body()` helpers that produce `OrbitalBody` values consistent with real observational data. These feed the Phase 2 validation tests. Needed because the CLI's star lookup only knows Tau Ceti, and validation cases require precisely-tuned Earth and Mars params. Wire into the binary crate's star lookup so `--star Earth` / `--star Mars` work.
+
+### CLIM-01: Temperature field
+- **Crate:** ymir-climate
+- **Status:** done
+- **Depends on:** ATMO-02, SURF-03
+- **Blocked:** no
+- **Assignee:** agent
+
+NOTE: `ymir-system` added as dev-dep to ymir-climate so tests can construct `SkeletonWorld` via `OrbitalBody`. No runtime dep added; layering preserved.
+
+`TemperatureField { per_tile_k: Vec<f64> }`. Two branches per design doc section 5.5: rotating planets use `T_base(lat) - lapse_rate * elevation` with cos(lat) irradiance scaling; tidally locked planets use substellar-angle irradiance. Lapse rate derived from atmosphere (scale with pressure; dry adiabatic fallback). Tests: Earth inputs give ~288 K mean surface temp, polar < equatorial, tidally locked substellar point > antistellar.
+
+### BIOME-01: Biome palette enums
+- **Crate:** ymir-biome
+- **Status:** done
+- **Depends on:** ATMO-02
+- **Blocked:** no
+- **Assignee:** agent
+
+NOTE: `ymir-atmosphere` added as direct dep to ymir-biome because `palette_for` consumes `AtmosphereClass`. Layering stays acyclic: biome → atmosphere → system → catalog → core.
+
+`Biome` enum with variants spanning all palette types (forest, grassland, desert, tundra, ocean, bedrock, dust_plain, polar_co2_ice, venus_crust, titan_methane_sea, etc.). `BiomePalette` enum selecting which subset is available, with `palette_for(atmo_class) -> &'static [Biome]`. Per design doc section 5.6 palette switch.
+
+### CLIM-02: Moisture field
+- **Crate:** ymir-climate
+- **Status:** in-progress
+- **Depends on:** CLIM-01
+- **Blocked:** no
+- **Assignee:** agent
+
+`MoistureField { per_tile: Vec<f64> }` (relative humidity or g/kg). Two-component model: latitude-banded circulation (or radial from substellar point if tidally locked) + wind-transported moisture with orographic precipitation bias. Clausius-Clapeyron capacity scaling with atmospheric P and T. Dry worlds (no liquid water retained) return zero everywhere. Tests: zero moisture on dry world, poles drier than mid-latitudes on Earth-like, windward slopes wetter than leeward.
+
+### CLIM-03: Wind model
+- **Crate:** ymir-climate
+- **Status:** in-progress
+- **Depends on:** CLIM-01
+- **Blocked:** no
+- **Assignee:** agent
+
+`WindField { per_tile: Vec<WindVector>, cell_count: u32 }`. Rotating planets: latitude-dependent prevailing winds (trade/westerly/polar easterly). Cell count scaled by rotation rate. Tidally locked: radial outflow from substellar at surface. Feeds CLIM-02 orographic transport.
+
+### CLIM-04: ClimateMap and SkeletonWorld integration
+- **Crate:** ymir-climate
+- **Status:** pending
+- **Depends on:** CLIM-01, CLIM-02, CLIM-03
+- **Blocked:** no
+- **Assignee:**
+
+`ClimateMap { temperature, moisture, wind }` struct. `ClimateMap::build(&SkeletonWorld) -> Self` runs all three fields in the right order (temperature → wind → moisture, since moisture needs wind). Serializable. Tests: build is deterministic; round-trips through bincode.
+
+### BIOME-02: Whittaker classification
+- **Crate:** ymir-biome
+- **Status:** pending
+- **Depends on:** BIOME-01, CLIM-04
+- **Blocked:** no
+- **Assignee:**
+
+Temperature × moisture → Biome lookup, returning only biomes in the active palette. Earth-palette lookup calibrated against a standard Whittaker diagram. Abiotic palettes use simpler physical-state maps. Tests: Earth-palette (hot, wet) → tropical forest; (cold, dry) → tundra; Mars-palette maps (any, any) to a small abiotic set.
+
+### BIOME-03: Markov smoothing
+- **Crate:** ymir-biome
+- **Status:** pending
+- **Depends on:** BIOME-02
+- **Blocked:** no
+- **Assignee:**
+
+Markov transition smoothing pass over tile neighbors. Weight file schema (TOML/JSON) with transition probabilities between biomes. Phase 2 ships hand-tuned weights per palette (data-derived weights are Phase 5). Tests: smoothing reduces lone-tile islands; preserves large contiguous regions; idempotent-ish after enough iterations.
+
+### BIOME-04: BiomeMap integration
+- **Crate:** ymir-biome
+- **Status:** pending
+- **Depends on:** BIOME-03
+- **Blocked:** no
+- **Assignee:**
+
+`BiomeMap { per_tile: Vec<Biome> }` struct. `BiomeMap::build(&SkeletonWorld, &ClimateMap) -> Self` runs Whittaker + smoothing. Serializable. Tests: determinism, serde round-trip, every tile assigned a biome in the active palette.
+
+### STOR-02: Climate and biome persistence
+- **Crate:** ymir-storage
+- **Status:** pending
+- **Depends on:** CLIM-04, BIOME-04
+- **Blocked:** no
+- **Assignee:**
+
+Because ymir-storage cannot depend on ymir-climate / ymir-biome per the crate dependency rules, add generic save/load helpers in ymir-storage (`save_bin<T: Serialize>(path, &t)`, `load_bin<T: DeserializeOwned>(path) -> T`) and keep the concrete climate.bin / biomes.bin writes in the binary crate. Update `stages_computed` vocabulary in the manifest ("climate", "biomes") and extend `ymir info` to summarize climate stats (mean T, moisture coverage) and biome histogram.
+
+### REND-02: Biome-colored Mollweide
+- **Crate:** ymir-render
+- **Status:** pending
+- **Depends on:** BIOME-04
+- **Blocked:** no
+- **Assignee:**
+
+Add `render_biome_mollweide(&SkeletonWorld, &BiomeMap, cfg)` producing a PNG where each tile is colored by biome (static color table per Biome variant). Keep the elevation renderer; this is an additional entry point. Tests: dimensions, determinism, recognizable palette-level distinctions (Earth-like shows greens/blues/tans; Mars-like shows reds/browns).
+
+### CLI-04: Extend ymir generate for climate and biomes
+- **Crate:** ymir (binary)
+- **Status:** pending
+- **Depends on:** CLIM-04, BIOME-04, REND-02, STOR-02
+- **Blocked:** no
+- **Assignee:**
+
+After the skeleton stage, compute `ClimateMap` and `BiomeMap`. Persist climate.bin, biomes.bin. Emit `preview_biome.png` alongside the elevation preview. Update `stages_computed`. Add `--skip-climate` / `--skip-biomes` flags so users can stop at any stage. Update the stdout summary with climate + biome histogram.
+
+### CLI-03: ymir regenerate command
+- **Crate:** ymir (binary)
+- **Status:** pending
+- **Depends on:** CLI-04, CORE-04, CORE-05
+- **Blocked:** no
+- **Assignee:**
+
+`ymir regenerate --world PATH --overrides FILE` applies a per-stage override JSON, marks dirty stages via the dependency graph, recomputes only dirty stages, and rewrites the manifest with the new `stages_computed` list and overrides_file pointer. Tests: override at stage 3 (atmosphere) recomputes atmosphere + skeleton + climate + biomes but leaves star/system bits unchanged; byte comparison of unchanged stage artifacts.
+
+### VALID-01: Earth validation test
+- **Crate:** ymir (binary, integration tests)
+- **Status:** pending
+- **Depends on:** CLI-04, CAT-03
+- **Blocked:** no
+- **Assignee:**
+
+Integration test: `ymir generate --star Earth --seed 1` produces mean surface T within 5 K of 288 K, ocean tiles ~70% of surface (given Earth continental_fraction override), biome histogram includes forest/grassland/desert/tundra/ocean. Pure assertions, no UI.
+
+### VALID-02: Mars validation test
+- **Crate:** ymir (binary, integration tests)
+- **Status:** pending
+- **Depends on:** CLI-04, CAT-03
+- **Blocked:** no
+- **Assignee:**
+
+Integration test: `ymir generate --star Mars --seed 1` produces the Mars-like abiotic biome palette (no forests/grasslands), mean T below 230 K, CO2-dominated atmosphere.
+
+### VALID-03: Tidally locked validation test
+- **Crate:** ymir (binary, integration tests)
+- **Status:** pending
+- **Depends on:** CLI-04
+- **Blocked:** no
+- **Assignee:**
+
+Integration test: on a synthetic tidally-locked body, substellar-point temperature is significantly higher than antistellar temperature; biome map shows radial zoning rather than latitudinal banding.
+
+### VALID-04: Override progression test
+- **Crate:** ymir (binary, integration tests)
+- **Status:** pending
+- **Depends on:** CLI-03
+- **Blocked:** no
+- **Assignee:**
+
+Integration test: generate world A, save; apply an atmosphere-stage override; regenerate; confirm atmosphere, skeleton, climate, biome artifacts changed but star/system artifacts are byte-identical.
+

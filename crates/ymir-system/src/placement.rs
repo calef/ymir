@@ -9,6 +9,14 @@ use ymir_core::WorldRng;
 /// Earth mass in solar masses, used for Hill radius calculations.
 const EARTH_MASS_IN_SOLAR: f64 = 3.003e-6;
 
+/// Mass ceiling (Earth masses) below which an exoplanet whose radius is not
+/// directly observed is treated as rocky rather than volatile-rich. Chosen to
+/// sit near the empirical Terran / sub-Neptune transition (~4 M_earth). This
+/// matters for RV-only detections (e.g., Tau Ceti e/g/h) where the catalogued
+/// mass is the `m sin i` minimum: feeding those values into the generic M->R
+/// inverse picks the volatile branch and produces spurious sub-Neptunes.
+const ROCKY_MASS_CEILING: f64 = 4.0;
+
 /// Configuration for the orbital placement algorithm.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PlacementConfig {
@@ -56,6 +64,22 @@ fn mass_from_radius(r: f64) -> f64 {
         // Volatile-rich (super-Earth / sub-Neptune) regime
         r.powf(1.7)
     }
+}
+
+/// Invert the rocky (Terran) branch of the Chen & Kipping 2017 M-R relation,
+/// returning radius (Earth radii) for a given mass (Earth masses).
+///
+/// Used to cover the RV-only minimum-mass case: the generic dual-branch inverse
+/// would otherwise push modestly-massive RV detections (~2-4 M_earth) onto the
+/// volatile branch and classify them as sub-Neptunes, contradicting real-world
+/// consensus that planets like Tau Ceti e are rocky candidates.
+fn infer_radius_rocky_preferred(mass_earth: f64) -> f64 {
+    // Rocky branch in placement's simplified relation is M = R^2.06,
+    // so R = M^(1/2.06). Guard against non-positive mass.
+    if mass_earth <= 0.0 {
+        return 0.0;
+    }
+    mass_earth.powf(1.0 / 2.06)
 }
 
 /// Compute the mutual Hill radius for two adjacent planets.
@@ -150,15 +174,21 @@ pub fn place_planets(
         // Use observed radius if available, otherwise estimate from mass,
         // otherwise assign a default.
         let radius = if let Some(r) = exo.radius {
+            // Directly observed radius (e.g., transit detection). Trust it.
             r
         } else if let Some(m) = exo.mass {
-            // Invert the mass-radius relation approximately.
-            // For rocky: M = R^2.06 -> R = M^(1/2.06)
-            // For volatile: M = R^1.7 -> R = M^(1/1.7)
-            // Try rocky first; if result > 1.23, use volatile.
-            let r_rocky = m.powf(1.0 / 2.06);
-            if r_rocky <= 1.23 {
-                r_rocky
+            // No observed radius: this is typically an RV-only detection
+            // reporting a minimum mass (`m sin i`). The generic dual-branch
+            // inverse of Chen & Kipping would place anything above ~1.6
+            // M_earth onto the volatile branch and classify it as a
+            // sub-Neptune, even though the community treats small RV-only
+            // detections (e.g., Tau Ceti e/g/h at ~1.8-3.9 M_earth) as rocky
+            // candidates. Below ROCKY_MASS_CEILING we therefore force the
+            // rocky branch; above it we keep the volatile branch, because a
+            // confirmed >4 M_earth planet without a transit radius is more
+            // plausibly a gas-enveloped sub-Neptune than a pure rock.
+            if m <= ROCKY_MASS_CEILING {
+                infer_radius_rocky_preferred(m)
             } else {
                 m.powf(1.0 / 1.7)
             }
@@ -252,7 +282,7 @@ fn sort_by_sma(planets: &mut Vec<PlacedPlanet>, orbit_mass: &mut Vec<(f64, f64)>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ymir_catalog::exoplanets::ExoplanetRecord;
+    use ymir_catalog::exoplanets::{DiscoveryMethod, ExoplanetRecord};
     use ymir_catalog::star_context::StarContext;
     use ymir_core::WorldRng;
 
@@ -381,6 +411,139 @@ mod tests {
                 pair[1].semi_major_axis
             );
         }
+    }
+
+    #[test]
+    fn tau_ceti_e_is_rocky_not_subneptune() {
+        // Tau Ceti e: RV-only, min mass 3.93 M_earth, no observed radius.
+        // Without the rocky-preferred override it would land on the volatile
+        // branch at R ~ 2.24 R_earth (SubNeptune). With the override it should
+        // stay on the rocky branch and classify as Terran or SuperEarth.
+        let star = tau_ceti_star();
+        let known = ExoplanetRecord::tau_ceti_system();
+        let config = PlacementConfig::default();
+        let mut rng = WorldRng::new(42);
+        let planets = place_planets(&star, &known, &mut rng, &config);
+
+        let e = planets
+            .iter()
+            .find(|p| p.name.as_deref() == Some("Tau Ceti e"))
+            .expect("Tau Ceti e should be placed");
+        assert!(
+            e.radius < 2.0,
+            "Tau Ceti e should have rocky-branch radius < 2.0 R_earth, got {}",
+            e.radius
+        );
+        assert!(
+            e.radius > 1.0,
+            "Tau Ceti e radius should exceed Earth's at 3.93 M_earth, got {}",
+            e.radius
+        );
+    }
+
+    #[test]
+    fn tau_ceti_g_is_rocky() {
+        // Tau Ceti g: min mass 1.75 M_earth, RV-only. Should be rocky under
+        // either branch choice, but verify explicitly.
+        let star = tau_ceti_star();
+        let known = ExoplanetRecord::tau_ceti_system();
+        let config = PlacementConfig::default();
+        let mut rng = WorldRng::new(42);
+        let planets = place_planets(&star, &known, &mut rng, &config);
+
+        let g = planets
+            .iter()
+            .find(|p| p.name.as_deref() == Some("Tau Ceti g"))
+            .expect("Tau Ceti g should be placed");
+        assert!(
+            g.radius < 1.5,
+            "Tau Ceti g at 1.75 M_earth should have R < 1.5 R_earth, got {}",
+            g.radius
+        );
+    }
+
+    #[test]
+    fn rv_only_above_threshold_stays_volatile() {
+        // A synthetic RV-only record at 10 M_earth (well above ROCKY_MASS_CEILING)
+        // should keep the volatile inverse: R = 10^(1/1.7) ~ 3.44 R_earth, which
+        // classifies as a SubNeptune. Verifies we didn't accidentally force
+        // everything rocky.
+        let star = tau_ceti_star();
+        let known = vec![ExoplanetRecord {
+            name: "Synthetic massive RV".into(),
+            host_star: "Tau Ceti".into(),
+            discovery_method: DiscoveryMethod::RadialVelocity,
+            discovery_year: 2020,
+            orbital_period: Some(200.0),
+            semi_major_axis: Some(0.8),
+            eccentricity: None,
+            inclination: None,
+            mass: Some(10.0),
+            radius: None,
+            equilibrium_temp: None,
+        }];
+        let config = PlacementConfig::default();
+        let mut rng = WorldRng::new(7);
+        let planets = place_planets(&star, &known, &mut rng, &config);
+
+        let syn = planets
+            .iter()
+            .find(|p| p.name.as_deref() == Some("Synthetic massive RV"))
+            .expect("synthetic record should be placed");
+        // Volatile branch R for M=10: 10^(1/1.7) ~ 3.44.
+        assert!(
+            syn.radius > 2.5,
+            "10 M_earth RV-only should stay on volatile branch (R > 2.5), got {}",
+            syn.radius
+        );
+    }
+
+    #[test]
+    fn observed_radius_not_overridden() {
+        // A transit-observed record with mass below the ceiling but a directly
+        // measured radius above 2 R_earth should keep the observed radius.
+        // This guards against the override reaching in and clobbering observed
+        // data.
+        let star = tau_ceti_star();
+        let known = vec![ExoplanetRecord {
+            name: "Transit low-mass puffy".into(),
+            host_star: "Tau Ceti".into(),
+            discovery_method: DiscoveryMethod::Transit,
+            discovery_year: 2019,
+            orbital_period: Some(50.0),
+            semi_major_axis: Some(0.3),
+            eccentricity: None,
+            inclination: None,
+            mass: Some(3.5),
+            radius: Some(3.0),
+            equilibrium_temp: None,
+        }];
+        let config = PlacementConfig::default();
+        let mut rng = WorldRng::new(11);
+        let planets = place_planets(&star, &known, &mut rng, &config);
+
+        let puffy = planets
+            .iter()
+            .find(|p| p.name.as_deref() == Some("Transit low-mass puffy"))
+            .expect("observed record should be placed");
+        assert!(
+            (puffy.radius - 3.0).abs() < 1e-12,
+            "observed radius 3.0 should be preserved, got {}",
+            puffy.radius
+        );
+    }
+
+    #[test]
+    fn infer_radius_rocky_preferred_monotonic_and_earthlike() {
+        // R(1 M_earth) should be 1 R_earth, and the function should be monotonic.
+        let r_earth = infer_radius_rocky_preferred(1.0);
+        assert!(
+            (r_earth - 1.0).abs() < 1e-9,
+            "R(1 M_earth) should be 1, got {r_earth}"
+        );
+        assert!(infer_radius_rocky_preferred(0.5) < infer_radius_rocky_preferred(1.0));
+        assert!(infer_radius_rocky_preferred(1.0) < infer_radius_rocky_preferred(3.93));
+        assert_eq!(infer_radius_rocky_preferred(0.0), 0.0);
     }
 
     #[test]

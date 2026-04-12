@@ -7,4 +7,7 @@
 pub mod catalog_index;
 pub mod exoplanets;
 pub mod gaia;
+pub mod sol;
 pub mod star_context;
+
+pub use sol::sol_context;

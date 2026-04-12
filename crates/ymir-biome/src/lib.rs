@@ -8,3 +8,5 @@ pub mod markov;
 pub mod palette;
 pub mod weight_schema;
 pub mod whittaker;
+
+pub use palette::{Biome, BiomePalette, palette_for};

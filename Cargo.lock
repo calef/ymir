@@ -1418,6 +1418,8 @@ name = "ymir-biome"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
+ "ymir-atmosphere",
  "ymir-climate",
  "ymir-core",
 ]
@@ -1439,6 +1441,7 @@ dependencies = [
  "ymir-atmosphere",
  "ymir-core",
  "ymir-surface",
+ "ymir-system",
 ]
 
 [[package]]

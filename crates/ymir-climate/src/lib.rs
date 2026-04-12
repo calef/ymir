@@ -7,3 +7,5 @@ pub mod climate_field;
 pub mod moisture;
 pub mod temperature;
 pub mod wind;
+
+pub use temperature::{TemperatureConfig, TemperatureField, build_temperature_field};
