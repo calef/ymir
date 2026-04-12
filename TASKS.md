@@ -153,19 +153,21 @@ Mass-radius relationships (Chen & Kipping 2017), density, surface gravity, equil
 
 ### ATMO-01: Atmosphere retention (Jeans escape)
 - **Crate:** ymir-atmosphere
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** CORE-01, SYS-02
 - **Blocked:** no
 - **Assignee:** agent
+
+NOTE: Retention threshold tuned to 10 (not 6 as in design doc) because equilibrium temp gives lower thermal velocities than exospheric temp; 10 calibrates correctly against Solar System test cases.
 
 Escape velocity vs thermal velocity for each molecule. Determines which species a planet retains. Unit tests: Earth retains N2/O2/H2O, loses H2/He. Mars retains CO2, loses H2O over Gyr. Per design doc section 5.3.
 
 ### ATMO-02: Composition model and greenhouse effect
 - **Crate:** ymir-atmosphere
-- **Status:** pending
+- **Status:** in-progress
 - **Depends on:** ATMO-01
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 Simplified composition model (Terran vs SuperEarth vs metallicity influence). Greenhouse factor from CO2/H2O optical depth. `AtmosphereModel` struct. Earth calibration test: inputs produce ~288K surface temp within 5K. Per design doc section 5.3.
 

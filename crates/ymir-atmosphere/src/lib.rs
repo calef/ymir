@@ -8,3 +8,5 @@ pub mod atmosphere_model;
 pub mod composition;
 pub mod greenhouse;
 pub mod retention;
+
+pub use retention::{Gas, RetentionResult, compute_retention, compute_retention_for_body};
