@@ -9,4 +9,7 @@ pub mod composition;
 pub mod greenhouse;
 pub mod retention;
 
+pub use atmosphere_model::AtmosphereModel;
+pub use composition::{AtmosphereClass, derive_composition};
+pub use greenhouse::{greenhouse_factor, surface_temperature};
 pub use retention::{Gas, RetentionResult, compute_retention, compute_retention_for_body};

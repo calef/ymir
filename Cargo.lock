@@ -1271,6 +1271,8 @@ name = "ymir-atmosphere"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
+ "ymir-catalog",
  "ymir-core",
  "ymir-system",
 ]

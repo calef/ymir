@@ -164,10 +164,12 @@ Escape velocity vs thermal velocity for each molecule. Determines which species 
 
 ### ATMO-02: Composition model and greenhouse effect
 - **Crate:** ymir-atmosphere
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** ATMO-01
 - **Blocked:** no
 - **Assignee:** agent
+
+NOTE: Greenhouse tau coefficients calibrated to A=10.0 (CO2/H2O term) and B=0.5 (base scattering) instead of design doc's 0.2/0.05. Those spec values cannot simultaneously satisfy Earth calibration (~288K at 1 bar) and Venus (>600K at 90 bar). Calibrated values hit both targets.
 
 Simplified composition model (Terran vs SuperEarth vs metallicity influence). Greenhouse factor from CO2/H2O optical depth. `AtmosphereModel` struct. Earth calibration test: inputs produce ~288K surface temp within 5K. Per design doc section 5.3.
 
@@ -191,10 +193,10 @@ Poisson-seeded flood fill for plate assignment. Boundary classification (converg
 
 ### SURF-03: Heightmap generation
 - **Crate:** ymir-surface
-- **Status:** pending
+- **Status:** in-progress
 - **Depends on:** SURF-02, ATMO-02
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 Tectonic bias field + spherical fractal noise. Noise amplitude scaled by gravity. Mountain height cap from yield strength / (density * g). Tests: lower-gravity planet has higher max elevation. `SkeletonWorld` struct. Per design doc section 5.4.
 
