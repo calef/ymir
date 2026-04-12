@@ -22,6 +22,8 @@ description = "A causal star-to-surface planet simulator grounded in real astron
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+bincode = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 ymir-core = { path = "crates/ymir-core" }
 ymir-catalog = { path = "crates/ymir-catalog" }
 ymir-system = { path = "crates/ymir-system" }
@@ -32,3 +34,6 @@ ymir-biome = { path = "crates/ymir-biome" }
 ymir-detail = { path = "crates/ymir-detail" }
 ymir-render = { path = "crates/ymir-render" }
 ymir-storage = { path = "crates/ymir-storage" }
+
+[dev-dependencies]
+tempfile = "3"

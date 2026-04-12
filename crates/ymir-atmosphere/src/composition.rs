@@ -8,7 +8,7 @@
 //! mole-fraction breakdown, a surface pressure estimate, and a coarse
 //! [`AtmosphereClass`] used downstream by the biome palette.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use ymir_system::orbital_body::OrbitalBody;
@@ -35,7 +35,7 @@ pub enum AtmosphereClass {
 }
 
 /// Normalize a map of mole fractions so that the values sum to 1.
-fn normalize(map: &mut HashMap<Gas, f64>) {
+fn normalize(map: &mut BTreeMap<Gas, f64>) {
     let sum: f64 = map.values().sum();
     if sum > 0.0 {
         for v in map.values_mut() {
@@ -58,7 +58,7 @@ fn metallicity_multiplier(metallicity: f64) -> f64 {
 /// [`AtmosphereClass`] from a planet's bulk properties, the set of gases
 /// retention says it can hold, and its host star's metallicity.
 ///
-/// The returned composition is a `HashMap<Gas, f64>` of mole fractions that
+/// The returned composition is a `BTreeMap<Gas, f64>` of mole fractions that
 /// sum to approximately 1.0 (within floating-point tolerance). When the body
 /// has no retained atmosphere the map is empty and the pressure is zero.
 pub fn derive_composition(
@@ -66,19 +66,19 @@ pub fn derive_composition(
     retained: &[Gas],
     metallicity: f64,
     enable_biology: bool,
-) -> (HashMap<Gas, f64>, f64, AtmosphereClass) {
+) -> (BTreeMap<Gas, f64>, f64, AtmosphereClass) {
     let retains = |g: Gas| retained.contains(&g);
     let metal_mult = metallicity_multiplier(metallicity);
 
     // No atmosphere: empty retention set, or body too small to hold onto
     // anything over geological time.
     if retained.is_empty() || body.radius < 0.3 {
-        return (HashMap::new(), 0.0, AtmosphereClass::None);
+        return (BTreeMap::new(), 0.0, AtmosphereClass::None);
     }
 
     // Gas giant: large radius, still retains H2.
     if body.radius >= 4.0 && retains(Gas::H2) {
-        let mut comp = HashMap::new();
+        let mut comp = BTreeMap::new();
         comp.insert(Gas::H2, 0.96);
         comp.insert(Gas::He, 0.04);
         let pressure = 1000.0 * metal_mult;
@@ -87,7 +87,7 @@ pub fn derive_composition(
 
     // Super-Earth / sub-Neptune with an H2/He envelope.
     if body.radius >= 2.0 && retains(Gas::H2) {
-        let mut comp = HashMap::new();
+        let mut comp = BTreeMap::new();
         comp.insert(Gas::H2, 0.50);
         comp.insert(Gas::He, 0.10);
         comp.insert(Gas::H2O, 0.20);
@@ -103,7 +103,7 @@ pub fn derive_composition(
     // Earth-like: biology flag on, in the habitable zone, and retains both
     // nitrogen and free oxygen.
     if enable_biology && body.is_in_hz && retains(Gas::O2) && retains(Gas::N2) {
-        let mut comp = HashMap::new();
+        let mut comp = BTreeMap::new();
         comp.insert(Gas::N2, 0.78);
         comp.insert(Gas::O2, 0.21);
         comp.insert(Gas::Ar, 0.0093);
@@ -118,7 +118,7 @@ pub fn derive_composition(
     if retains(Gas::CO2) {
         if body.mass > 0.5 {
             // Venus-like thick CO2.
-            let mut comp = HashMap::new();
+            let mut comp = BTreeMap::new();
             comp.insert(Gas::CO2, 0.95);
             comp.insert(Gas::N2, 0.04);
             comp.insert(Gas::Ar, 0.007);
@@ -130,7 +130,7 @@ pub fn derive_composition(
             return (comp, pressure, AtmosphereClass::ThickCO2);
         } else {
             // Mars-like thin CO2.
-            let mut comp = HashMap::new();
+            let mut comp = BTreeMap::new();
             comp.insert(Gas::CO2, 0.95);
             comp.insert(Gas::N2, 0.03);
             comp.insert(Gas::Ar, 0.02);
@@ -142,7 +142,7 @@ pub fn derive_composition(
 
     // N2-dominated (Titan-like), if CO2 is gone but N2 survived.
     if retains(Gas::N2) {
-        let mut comp = HashMap::new();
+        let mut comp = BTreeMap::new();
         comp.insert(Gas::N2, 0.90);
         comp.insert(Gas::Ar, 0.05);
         comp.insert(Gas::H2O, 0.05);
@@ -152,7 +152,7 @@ pub fn derive_composition(
     }
 
     // Fallback: whatever is retained, equally weighted and normalized.
-    let mut comp = HashMap::new();
+    let mut comp = BTreeMap::new();
     for &g in retained {
         comp.insert(g, 1.0);
     }
@@ -164,7 +164,7 @@ pub fn derive_composition(
 
 /// Pick a best-effort [`AtmosphereClass`] for an arbitrary composition when
 /// none of the named archetypes applied.
-fn best_class_for(comp: &HashMap<Gas, f64>) -> AtmosphereClass {
+fn best_class_for(comp: &BTreeMap<Gas, f64>) -> AtmosphereClass {
     let frac = |g: Gas| comp.get(&g).copied().unwrap_or(0.0);
     if frac(Gas::H2) + frac(Gas::He) > 0.5 {
         AtmosphereClass::HydrogenHelium
@@ -217,7 +217,7 @@ mod tests {
         }
     }
 
-    fn sum_fractions(comp: &HashMap<Gas, f64>) -> f64 {
+    fn sum_fractions(comp: &BTreeMap<Gas, f64>) -> f64 {
         comp.values().sum()
     }
 

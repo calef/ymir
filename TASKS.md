@@ -222,12 +222,23 @@ Software rasterizer using the `image` crate. Mollweide equal-area projection. Co
 
 ### CLI-01: `ymir generate` command
 - **Crate:** ymir (binary)
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** CAT-01, SYS-01, SYS-02, ATMO-01, ATMO-02, SURF-03, STOR-01, REND-01
 - **Blocked:** no
 - **Assignee:** agent
 
+NOTE: AtmosphereModel.composition switched from HashMap to BTreeMap so bincode-serialized skeleton.bin is byte-deterministic across runs. Purely mechanical change; Gas already implements Ord.
+
 Wire up the full pipeline via clap CLI. `ymir generate --star "Tau Ceti" --seed 42 --output worlds/tau_ceti_42/` produces skeleton data on disk and Mollweide PNG. Per design doc section 7.5.
+
+### SYS-03: Rocky/volatile branch selection in placement
+- **Crate:** ymir-system
+- **Status:** ready
+- **Depends on:** SYS-01, SYS-02
+- **Blocked:** no
+- **Assignee:**
+
+Tau Ceti e, h, and f all have RV-only minimum-mass data. Current pipeline feeds those into the M→R inverse, which lands on the volatile branch, producing three 2.24 R_earth sub-Neptunes. Real-world consensus treats e and f as rocky candidates. Add a rocky-branch override: when the catalogued minimum mass is below the rocky/volatile threshold (~4 M_earth), force the rocky branch even though the inverse would pick volatile. Keep the volatile branch for objects where catalog mass is clearly above threshold. Phase 2 scope.
 
 ### CLI-02: `ymir info` command
 - **Crate:** ymir (binary)

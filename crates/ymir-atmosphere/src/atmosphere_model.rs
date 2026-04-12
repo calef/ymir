@@ -7,7 +7,7 @@
 //! picks a composition archetype, and computes greenhouse warming, scale
 //! height, moisture capacity, and UV transmission.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use ymir_catalog::star_context::StarContext;
@@ -38,7 +38,7 @@ pub struct AtmosphereModel {
     /// Surface pressure, bar.
     pub surface_pressure: f64,
     /// Composition as mole fractions, summing to ~1.0.
-    pub composition: HashMap<Gas, f64>,
+    pub composition: BTreeMap<Gas, f64>,
     /// Multiplicative greenhouse temperature factor.
     pub greenhouse_factor: f64,
     /// Effective surface temperature after greenhouse, K.
@@ -95,7 +95,7 @@ impl AtmosphereModel {
 
 /// Mean molar mass of a composition, in g/mol. Returns zero for an empty
 /// composition.
-fn mean_molar_mass(composition: &HashMap<Gas, f64>) -> f64 {
+fn mean_molar_mass(composition: &BTreeMap<Gas, f64>) -> f64 {
     composition
         .iter()
         .map(|(g, f)| g.molar_mass() * f)
@@ -107,7 +107,7 @@ fn mean_molar_mass(composition: &HashMap<Gas, f64>) -> f64 {
 ///
 /// Returns zero for an empty composition or zero gravity.
 fn compute_scale_height(
-    composition: &HashMap<Gas, f64>,
+    composition: &BTreeMap<Gas, f64>,
     effective_temp: f64,
     surface_gravity: f64,
 ) -> f64 {

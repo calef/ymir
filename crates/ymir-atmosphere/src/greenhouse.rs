@@ -11,7 +11,7 @@
 //! surface, and Venus-like inputs (90 bar, CO2-dominated) blow up into the
 //! 600 K+ range.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::retention::Gas;
 
@@ -26,7 +26,7 @@ const TAU_SCATTERING: f64 = 0.5;
 /// Returns a factor `f` such that `T_surface = T_eq * f`. For a zero-pressure
 /// atmosphere this is exactly 1.0 (no greenhouse). For Earth-calibrated
 /// inputs it lands near 1.134.
-pub fn greenhouse_factor(composition: &HashMap<Gas, f64>, pressure_bar: f64) -> f64 {
+pub fn greenhouse_factor(composition: &BTreeMap<Gas, f64>, pressure_bar: f64) -> f64 {
     if pressure_bar <= 0.0 {
         return 1.0;
     }
@@ -51,8 +51,8 @@ pub fn surface_temperature(equilibrium_temp_k: f64, greenhouse: f64) -> f64 {
 mod tests {
     use super::*;
 
-    fn earth_composition() -> HashMap<Gas, f64> {
-        let mut c = HashMap::new();
+    fn earth_composition() -> BTreeMap<Gas, f64> {
+        let mut c = BTreeMap::new();
         c.insert(Gas::N2, 0.78);
         c.insert(Gas::O2, 0.21);
         c.insert(Gas::Ar, 0.0093);
@@ -61,8 +61,8 @@ mod tests {
         c
     }
 
-    fn venus_composition() -> HashMap<Gas, f64> {
-        let mut c = HashMap::new();
+    fn venus_composition() -> BTreeMap<Gas, f64> {
+        let mut c = BTreeMap::new();
         c.insert(Gas::CO2, 0.95);
         c.insert(Gas::N2, 0.04);
         c.insert(Gas::Ar, 0.007);
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn greenhouse_factor_is_monotonic_in_pressure_for_co2() {
-        let mut c = HashMap::new();
+        let mut c = BTreeMap::new();
         c.insert(Gas::CO2, 0.95);
         let f_low = greenhouse_factor(&c, 0.1);
         let f_mid = greenhouse_factor(&c, 1.0);
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn empty_composition_still_has_base_scattering_greenhouse() {
-        let empty = HashMap::new();
+        let empty = BTreeMap::new();
         let f = greenhouse_factor(&empty, 1.0);
         // Only the base scattering term contributes; factor should be > 1.
         assert!(f > 1.0);
