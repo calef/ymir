@@ -337,16 +337,16 @@ Markov transition smoothing pass over tile neighbors. Weight file schema (TOML/J
 
 ### BIOME-04: BiomeMap integration
 - **Crate:** ymir-biome
-- **Status:** ready
+- **Status:** done
 - **Depends on:** BIOME-03
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 `BiomeMap { per_tile: Vec<Biome> }` struct. `BiomeMap::build(&SkeletonWorld, &ClimateMap) -> Self` runs Whittaker + smoothing. Serializable. Tests: determinism, serde round-trip, every tile assigned a biome in the active palette.
 
 ### STOR-02: Climate and biome persistence
 - **Crate:** ymir-storage
-- **Status:** pending
+- **Status:** ready
 - **Depends on:** CLIM-04, BIOME-04
 - **Blocked:** no
 - **Assignee:**
@@ -355,7 +355,7 @@ Because ymir-storage cannot depend on ymir-climate / ymir-biome per the crate de
 
 ### REND-02: Biome-colored Mollweide
 - **Crate:** ymir-render
-- **Status:** pending
+- **Status:** ready
 - **Depends on:** BIOME-04
 - **Blocked:** no
 - **Assignee:**

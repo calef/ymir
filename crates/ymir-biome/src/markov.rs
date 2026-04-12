@@ -15,9 +15,10 @@
 
 use crate::palette::{Biome, BiomePalette, palette_for};
 use crate::weight_schema::BiomeTransitions;
+use serde::{Deserialize, Serialize};
 
 /// Configuration for the Markov smoothing pass.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SmoothingConfig {
     /// Number of smoothing passes. 1–3 is typical for Phase 2.
     pub iterations: u32,

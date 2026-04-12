@@ -1417,11 +1417,15 @@ dependencies = [
 name = "ymir-biome"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "serde",
  "serde_json",
  "ymir-atmosphere",
+ "ymir-catalog",
  "ymir-climate",
  "ymir-core",
+ "ymir-surface",
+ "ymir-system",
 ]
 
 [[package]]

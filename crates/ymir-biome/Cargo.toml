@@ -10,6 +10,10 @@ serde = { version = "1", features = ["derive"] }
 ymir-core = { path = "../ymir-core" }
 ymir-atmosphere = { path = "../ymir-atmosphere" }
 ymir-climate = { path = "../ymir-climate" }
+ymir-surface = { path = "../ymir-surface" }
 
 [dev-dependencies]
 serde_json = "1"
+bincode = "1"
+ymir-system = { path = "../ymir-system" }
+ymir-catalog = { path = "../ymir-catalog" }
