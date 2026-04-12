@@ -366,12 +366,14 @@ NOTE: Implemented as two new modules in ymir-render: `biome_palette` (exhaustive
 
 ### CLI-04: Extend ymir generate for climate and biomes
 - **Crate:** ymir (binary)
-- **Status:** pending
+- **Status:** done
 - **Depends on:** CLIM-04, BIOME-04, REND-02, STOR-02
 - **Blocked:** no
-- **Assignee:**
+- **Assignee:** agent
 
 After the skeleton stage, compute `ClimateMap` and `BiomeMap`. Persist climate.bin, biomes.bin. Emit `preview_biome.png` alongside the elevation preview. Update `stages_computed`. Add `--skip-climate` / `--skip-biomes` flags so users can stop at any stage. Update the stdout summary with climate + biome histogram.
+
+NOTE: `--skip-climate` implies `--skip-biomes` enforced in code (biomes require climate). Manifest save moved to the end of `run_generate` so `stages_computed` reflects the full set actually computed. Earth smoke (`--star Earth --seed 1`) lands at mean T 288.0 K with an Earth-like biome mix (Grassland 23.7%, Savanna 22.9%, HotDesert 16.8%, Tundra 16.5%, BorealForest 6.5%); no calibration deviations. Tau Ceti planet 1 (`--planet 1`) resolves to Tau Ceti h at 0.243 AU (Venus-regime, mean T 1060 K, LavaPlain-dominated) rather than Tau Ceti e, which reflects the current placement ordering.
 
 ### CLI-03: ymir regenerate command
 - **Crate:** ymir (binary)
@@ -384,7 +386,7 @@ After the skeleton stage, compute `ClimateMap` and `BiomeMap`. Persist climate.b
 
 ### VALID-01: Earth validation test
 - **Crate:** ymir (binary, integration tests)
-- **Status:** pending
+- **Status:** ready
 - **Depends on:** CLI-04, CAT-03
 - **Blocked:** no
 - **Assignee:**
@@ -393,7 +395,7 @@ Integration test: `ymir generate --star Earth --seed 1` produces mean surface T 
 
 ### VALID-02: Mars validation test
 - **Crate:** ymir (binary, integration tests)
-- **Status:** pending
+- **Status:** ready
 - **Depends on:** CLI-04, CAT-03
 - **Blocked:** no
 - **Assignee:**
@@ -402,7 +404,7 @@ Integration test: `ymir generate --star Mars --seed 1` produces the Mars-like ab
 
 ### VALID-03: Tidally locked validation test
 - **Crate:** ymir (binary, integration tests)
-- **Status:** pending
+- **Status:** ready
 - **Depends on:** CLI-04
 - **Blocked:** no
 - **Assignee:**

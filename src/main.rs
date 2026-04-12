@@ -7,12 +7,13 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use ymir_atmosphere::AtmosphereModel;
-use ymir_biome::BiomeMap;
+use ymir_biome::{BiomeMap, BiomeMapConfig};
 use ymir_catalog::exoplanets::ExoplanetRecord;
 use ymir_catalog::sol::sol_context;
 use ymir_catalog::star_context::StarContext;
-use ymir_climate::ClimateMap;
+use ymir_climate::{ClimateConfig, ClimateMap};
 use ymir_core::WorldRng;
+use ymir_render::biome_mollweide::{BiomeRenderConfig, render_biome_mollweide};
 use ymir_render::globe_renderer::{GlobeRenderConfig, render_skeleton_mollweide_to_path};
 use ymir_storage::manifest::{GenerationConfig, WorldManifest};
 use ymir_storage::world_io::WorldDirectory;
@@ -59,6 +60,13 @@ enum Commands {
         /// Preview PNG height in pixels.
         #[arg(long, default_value_t = 512)]
         preview_height: u32,
+        /// Halt generation after the skeleton stage (skip climate and biomes).
+        /// Implies `--skip-biomes`.
+        #[arg(long)]
+        skip_climate: bool,
+        /// Halt generation after the climate stage (skip biomes + biome preview).
+        #[arg(long)]
+        skip_biomes: bool,
     },
     /// Display information about a generated world.
     Info {
@@ -79,16 +87,25 @@ fn main() -> ExitCode {
             no_biology,
             preview_width,
             preview_height,
-        } => run_generate(&GenerateArgs {
-            star,
-            planet,
-            seed,
-            output,
-            subdivision,
-            enable_biology: !no_biology,
-            preview_width,
-            preview_height,
-        }),
+            skip_climate,
+            skip_biomes,
+        } => {
+            // --skip-climate implies --skip-biomes; you can't compute biomes
+            // without a climate field.
+            let effective_skip_biomes = skip_biomes || skip_climate;
+            run_generate(&GenerateArgs {
+                star,
+                planet,
+                seed,
+                output,
+                subdivision,
+                enable_biology: !no_biology,
+                preview_width,
+                preview_height,
+                skip_climate,
+                skip_biomes: effective_skip_biomes,
+            })
+        }
         Commands::Info { path } => run_info(&path),
     };
     match result {
@@ -110,6 +127,10 @@ struct GenerateArgs {
     enable_biology: bool,
     preview_width: u32,
     preview_height: u32,
+    /// Skip the climate stage (and therefore biomes).
+    skip_climate: bool,
+    /// Skip the biomes stage (and biome preview render).
+    skip_biomes: bool,
 }
 
 /// Resolved star/body selection. `Derived` goes through placement and bulk
@@ -291,33 +312,16 @@ fn run_generate(args: &GenerateArgs) -> Result<(), String> {
         )
     })?;
     save_skeleton(&wd, &skeleton)?;
-    let manifest = WorldManifest {
-        version: "1.0".to_string(),
-        pipeline_version: env!("CARGO_PKG_VERSION").to_string(),
-        star_name: star_ctx.name.clone().unwrap_or_else(|| args.star.clone()),
-        star_catalog_id: Some(star_ctx.catalog_id.clone()),
-        planet_index: args.planet,
-        planet_name: body.name.clone(),
-        seed: args.seed,
-        created_at: chrono::Utc::now().to_rfc3339(),
-        overrides_file: None,
-        stages_computed: vec![
-            "stellar".to_string(),
-            "system".to_string(),
-            "atmosphere".to_string(),
-            "skeleton".to_string(),
-        ],
-        config: GenerationConfig {
-            grid_subdivision_level: args.subdivision,
-            enable_biology: args.enable_biology,
-            continental_fraction: None,
-        },
-    };
-    wd.save_manifest(&manifest)
-        .map_err(|e| format!("failed to save manifest: {e}"))?;
+
+    let mut stages_computed = vec![
+        "stellar".to_string(),
+        "system".to_string(),
+        "atmosphere".to_string(),
+        "skeleton".to_string(),
+    ];
 
     println!(
-        "[7/7] rendering preview ({}x{})...",
+        "[7/7] rendering elevation preview ({}x{})...",
         args.preview_width, args.preview_height
     );
     let render_cfg = GlobeRenderConfig {
@@ -329,8 +333,74 @@ fn run_generate(args: &GenerateArgs) -> Result<(), String> {
     render_skeleton_mollweide_to_path(&skeleton, &render_cfg, &preview_path)
         .map_err(|e| format!("failed to write preview {}: {}", preview_path.display(), e))?;
 
+    // Phase 2 stages: climate + biomes. Run in order unless user opted out.
+    let mut climate: Option<ClimateMap> = None;
+    let mut biomes: Option<BiomeMap> = None;
+
+    if !args.skip_climate {
+        println!("[climate] building ClimateMap...");
+        let c = ClimateMap::build(&skeleton, &ClimateConfig::default());
+        save_climate(&wd, &c)?;
+        stages_computed.push("climate".to_string());
+        climate = Some(c);
+
+        if !args.skip_biomes {
+            println!("[biomes] building BiomeMap...");
+            let climate_ref = climate.as_ref().expect("climate just computed");
+            let b = BiomeMap::build(&skeleton, climate_ref, &BiomeMapConfig::default());
+            save_biomes(&wd, &b)?;
+            stages_computed.push("biomes".to_string());
+
+            println!(
+                "[biomes] rendering biome preview ({}x{})...",
+                args.preview_width, args.preview_height
+            );
+            let biome_cfg = BiomeRenderConfig {
+                width: args.preview_width,
+                height: args.preview_height,
+            };
+            let biome_preview_path = wd.root.join("preview_biome.png");
+            let img = render_biome_mollweide(&skeleton, &b, &biome_cfg);
+            img.save(&biome_preview_path).map_err(|e| {
+                format!(
+                    "failed to write biome preview {}: {}",
+                    biome_preview_path.display(),
+                    e
+                )
+            })?;
+            biomes = Some(b);
+        }
+    }
+
+    let manifest = WorldManifest {
+        version: "1.0".to_string(),
+        pipeline_version: env!("CARGO_PKG_VERSION").to_string(),
+        star_name: star_ctx.name.clone().unwrap_or_else(|| args.star.clone()),
+        star_catalog_id: Some(star_ctx.catalog_id.clone()),
+        planet_index: args.planet,
+        planet_name: body.name.clone(),
+        seed: args.seed,
+        created_at: chrono::Utc::now().to_rfc3339(),
+        overrides_file: None,
+        stages_computed,
+        config: GenerationConfig {
+            grid_subdivision_level: args.subdivision,
+            enable_biology: args.enable_biology,
+            continental_fraction: None,
+        },
+    };
+    wd.save_manifest(&manifest)
+        .map_err(|e| format!("failed to save manifest: {e}"))?;
+
     println!();
-    print_summary(&star_ctx, args.planet, &skeleton, &args.output);
+    print_summary(
+        &star_ctx,
+        args.planet,
+        &skeleton,
+        climate.as_ref(),
+        biomes.as_ref(),
+        &args.output,
+    );
     Ok(())
 }
 
@@ -364,7 +434,6 @@ fn load_skeleton(wd: &WorldDirectory) -> Result<SkeletonWorld, String> {
 /// `ymir-storage` cannot depend on `ymir-climate` (layering rule), so this
 /// concrete wrapper lives in the binary crate and delegates to the generic
 /// [`save_bin`] helper.
-#[allow(dead_code)]
 fn save_climate(wd: &WorldDirectory, climate: &ClimateMap) -> Result<(), String> {
     let path = wd.climate_path();
     save_bin(&path, climate)
@@ -372,7 +441,6 @@ fn save_climate(wd: &WorldDirectory, climate: &ClimateMap) -> Result<(), String>
 }
 
 /// Load a previously saved [`ClimateMap`] from `<world>/climate.bin`.
-#[allow(dead_code)]
 fn load_climate(wd: &WorldDirectory) -> Result<ClimateMap, String> {
     let path = wd.climate_path();
     load_bin(&path).map_err(|e| format!("failed to load climate at {}: {}", path.display(), e))
@@ -382,7 +450,6 @@ fn load_climate(wd: &WorldDirectory) -> Result<ClimateMap, String> {
 ///
 /// Mirror of [`save_climate`]: `ymir-storage` cannot depend on `ymir-biome`,
 /// so this lives in the binary and delegates to [`save_bin`].
-#[allow(dead_code)]
 fn save_biomes(wd: &WorldDirectory, biomes: &BiomeMap) -> Result<(), String> {
     let path = wd.biomes_path();
     save_bin(&path, biomes)
@@ -390,7 +457,6 @@ fn save_biomes(wd: &WorldDirectory, biomes: &BiomeMap) -> Result<(), String> {
 }
 
 /// Load a previously saved [`BiomeMap`] from `<world>/biomes.bin`.
-#[allow(dead_code)]
 fn load_biomes(wd: &WorldDirectory) -> Result<BiomeMap, String> {
     let path = wd.biomes_path();
     load_bin(&path).map_err(|e| format!("failed to load biomes at {}: {}", path.display(), e))
@@ -418,7 +484,14 @@ fn elevation_stats(skeleton: &SkeletonWorld) -> (f64, f64, f64) {
 }
 
 /// Print the post-generation human-readable summary block.
-fn print_summary(star: &StarContext, planet_index: usize, skeleton: &SkeletonWorld, out: &Path) {
+fn print_summary(
+    star: &StarContext,
+    planet_index: usize,
+    skeleton: &SkeletonWorld,
+    climate: Option<&ClimateMap>,
+    biomes: Option<&BiomeMap>,
+    out: &Path,
+) {
     let body = &skeleton.body;
     let atmo = &skeleton.atmosphere;
     let (e_min, e_mean, e_max) = elevation_stats(skeleton);
@@ -454,6 +527,39 @@ fn print_summary(star: &StarContext, planet_index: usize, skeleton: &SkeletonWor
         e_max,
         skeleton.elevation.elevations_m.len()
     );
+    if let Some(c) = climate {
+        println!(
+            "Climate:         Mean T: {:.1} K  (min {:.1}, max {:.1}) | \
+             Mean moisture: {:.2} | Wind cells: {}",
+            c.temperature.mean(),
+            c.temperature.min(),
+            c.temperature.max(),
+            c.moisture.mean(),
+            c.wind.cell_count
+        );
+    }
+    if let Some(b) = biomes {
+        let total = b.len();
+        if total > 0 {
+            let mut hist = b.histogram();
+            // Sort by count descending, then by debug-name for deterministic
+            // tie-breaking (histogram() already sorts by name alphabetically).
+            hist.sort_by(|a, b| {
+                b.1.cmp(&a.1)
+                    .then_with(|| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)))
+            });
+            println!("Biomes:");
+            for (biome, count) in hist.iter().take(5) {
+                let pct = (*count as f64) / (total as f64) * 100.0;
+                println!(
+                    "  {:<24} {:>6} tiles ({:.1}%)",
+                    format!("{:?}", biome),
+                    count,
+                    pct
+                );
+            }
+        }
+    }
     println!("Output:          {}", out.display());
 }
 
@@ -671,6 +777,8 @@ mod tests {
             enable_biology: true,
             preview_width: 64,
             preview_height: 32,
+            skip_climate: false,
+            skip_biomes: false,
         }
     }
 
@@ -773,14 +881,80 @@ mod tests {
         assert!(out.join("manifest.json").is_file());
         assert!(out.join("skeleton.bin").is_file());
         assert!(out.join("preview.png").is_file());
+        assert!(out.join("climate.bin").is_file());
+        assert!(out.join("biomes.bin").is_file());
+        assert!(out.join("preview_biome.png").is_file());
 
-        // Manifest round-trips.
+        // Manifest round-trips and includes all six stages.
         let wd = WorldDirectory { root: out.clone() };
         let manifest = wd.load_manifest().expect("load manifest");
         assert_eq!(manifest.star_name, "Tau Ceti");
         assert_eq!(manifest.seed, 42);
         assert_eq!(manifest.planet_index, 0);
         assert!(manifest.config.enable_biology);
+        assert_eq!(
+            manifest.stages_computed,
+            vec![
+                "stellar".to_string(),
+                "system".to_string(),
+                "atmosphere".to_string(),
+                "skeleton".to_string(),
+                "climate".to_string(),
+                "biomes".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn generate_skip_climate_stops_after_skeleton() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let out = tmp.path().join("world");
+        let mut a = args(42, out.clone(), 0);
+        a.skip_climate = true;
+        a.skip_biomes = true; // mirrors the CLI's implication
+        run_generate(&a).expect("generate ok");
+        assert!(out.join("skeleton.bin").is_file());
+        assert!(out.join("preview.png").is_file());
+        assert!(!out.join("climate.bin").exists());
+        assert!(!out.join("biomes.bin").exists());
+        assert!(!out.join("preview_biome.png").exists());
+
+        let wd = WorldDirectory { root: out };
+        let manifest = wd.load_manifest().expect("load manifest");
+        assert_eq!(
+            manifest.stages_computed,
+            vec![
+                "stellar".to_string(),
+                "system".to_string(),
+                "atmosphere".to_string(),
+                "skeleton".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn generate_skip_biomes_stops_after_climate() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let out = tmp.path().join("world");
+        let mut a = args(42, out.clone(), 0);
+        a.skip_biomes = true;
+        run_generate(&a).expect("generate ok");
+        assert!(out.join("climate.bin").is_file());
+        assert!(!out.join("biomes.bin").exists());
+        assert!(!out.join("preview_biome.png").exists());
+
+        let wd = WorldDirectory { root: out };
+        let manifest = wd.load_manifest().expect("load manifest");
+        assert_eq!(
+            manifest.stages_computed,
+            vec![
+                "stellar".to_string(),
+                "system".to_string(),
+                "atmosphere".to_string(),
+                "skeleton".to_string(),
+                "climate".to_string(),
+            ]
+        );
     }
 
     #[test]
