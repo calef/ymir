@@ -305,13 +305,13 @@ mod tests {
             *atmo.moisture_capacity.inner(),
             *back.moisture_capacity.inner()
         );
-        assert_eq!(
-            *atmo.uv_surface_flux.inner(),
-            *back.uv_surface_flux.inner()
-        );
+        assert_eq!(*atmo.uv_surface_flux.inner(), *back.uv_surface_flux.inner());
         assert_eq!(atmo.class, back.class);
         assert_eq!(atmo.retained, back.retained);
-        assert_eq!(atmo.composition.inner().len(), back.composition.inner().len());
+        assert_eq!(
+            atmo.composition.inner().len(),
+            back.composition.inner().len()
+        );
         for (gas, frac) in atmo.composition.inner() {
             let round = back
                 .composition

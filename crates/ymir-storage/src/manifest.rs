@@ -56,6 +56,15 @@ pub struct WorldManifest {
     pub stages_computed: Vec<String>,
     /// Generation configuration parameters.
     pub config: GenerationConfig,
+    /// Skeleton tile indices for which a per-region detail artifact has been
+    /// persisted under `<world>/detail/region_NNNN.bin`. Kept sorted and
+    /// deduplicated; use [`WorldManifest::mark_region_generated`] and
+    /// [`WorldManifest::has_region`] to maintain the invariant.
+    ///
+    /// Serde-defaulted so manifests written before this field existed load
+    /// cleanly as an empty list.
+    #[serde(default)]
+    pub regions_generated: Vec<u32>,
 }
 
 impl WorldManifest {
@@ -70,6 +79,22 @@ impl WorldManifest {
     pub fn load(path: &Path) -> Result<Self, io::Error> {
         let data = fs::read_to_string(path)?;
         serde_json::from_str(&data).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    }
+
+    /// Record that the per-region detail artifact for `tile_index` has been
+    /// persisted. Idempotent: repeated calls with the same index leave the
+    /// tracked list unchanged, and the list stays sorted.
+    pub fn mark_region_generated(&mut self, tile_index: u32) {
+        match self.regions_generated.binary_search(&tile_index) {
+            Ok(_) => {}
+            Err(pos) => self.regions_generated.insert(pos, tile_index),
+        }
+    }
+
+    /// Return `true` if the per-region detail artifact for `tile_index` has
+    /// been recorded in this manifest.
+    pub fn has_region(&self, tile_index: u32) -> bool {
+        self.regions_generated.binary_search(&tile_index).is_ok()
     }
 }
 
@@ -95,6 +120,7 @@ mod tests {
                 "atmosphere".to_string(),
             ],
             config: GenerationConfig::default(),
+            regions_generated: Vec::new(),
         }
     }
 
@@ -130,5 +156,60 @@ mod tests {
     fn load_nonexistent_file_errors() {
         let result = WorldManifest::load(&PathBuf::from("/tmp/does_not_exist_ymir.json"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn mark_region_generated_is_idempotent() {
+        let mut manifest = sample_manifest();
+        manifest.mark_region_generated(42);
+        manifest.mark_region_generated(42);
+        assert_eq!(manifest.regions_generated, vec![42]);
+    }
+
+    #[test]
+    fn mark_region_generated_keeps_sorted() {
+        let mut manifest = sample_manifest();
+        manifest.mark_region_generated(10);
+        manifest.mark_region_generated(3);
+        manifest.mark_region_generated(7);
+        manifest.mark_region_generated(10);
+        assert_eq!(manifest.regions_generated, vec![3, 7, 10]);
+    }
+
+    #[test]
+    fn has_region_reflects_marks() {
+        let mut manifest = sample_manifest();
+        assert!(!manifest.has_region(5));
+        manifest.mark_region_generated(5);
+        assert!(manifest.has_region(5));
+        assert!(!manifest.has_region(6));
+    }
+
+    #[test]
+    fn manifest_backwards_compat_without_regions_generated() {
+        // Hand-craft a JSON manifest using the pre-STOR-03 field set (no
+        // `regions_generated` key). It must still deserialize, with the new
+        // field defaulting to an empty list.
+        let legacy_json = r#"{
+            "version": "1.0",
+            "pipeline_version": "0.1.0",
+            "star_name": "Tau Ceti",
+            "star_catalog_id": "HIP 8102",
+            "planet_index": 1,
+            "planet_name": "Tau Ceti e",
+            "seed": 42,
+            "created_at": "2026-04-11T12:00:00Z",
+            "overrides_file": null,
+            "stages_computed": ["stellar", "system"],
+            "config": {
+                "grid_subdivision_level": 5,
+                "enable_biology": true,
+                "continental_fraction": null
+            }
+        }"#;
+        let loaded: WorldManifest =
+            serde_json::from_str(legacy_json).expect("legacy manifest should deserialize");
+        assert!(loaded.regions_generated.is_empty());
+        assert_eq!(loaded.star_name, "Tau Ceti");
     }
 }

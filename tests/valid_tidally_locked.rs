@@ -89,12 +89,13 @@ fn tidally_locked_shows_radial_temperature_gradient() {
     // If this fires, the catalog / placement / tidal-lock threshold has
     // shifted and we need to re-pick a target. See the NOTE under VALID-03.
     assert!(
-        skeleton.body.tidal_locked,
+        *skeleton.body.tidal_locked.inner(),
         "target body should be tidally locked; got tidal_locked=false at {:.4} AU around {}",
-        skeleton.body.semi_major_axis,
+        skeleton.body.semi_major_axis.inner(),
         skeleton
             .atmosphere
             .composition
+            .inner()
             .keys()
             .map(|g| format!("{g:?}"))
             .collect::<Vec<_>>()

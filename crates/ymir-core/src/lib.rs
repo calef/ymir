@@ -13,6 +13,7 @@ pub mod traits;
 
 pub use dependency_graph::{PipelineDirtyState, Stage};
 pub use override_file::{OverrideError, OverrideFile, StageOverrides};
-pub use prng::WorldRng;
+pub use prng::{WorldRng, splitmix64, stable_derive_seed};
+pub use provenance::{ProvenanceReport, StageCounts, StageProvenance};
 pub use sourced::{Source, Sourced};
 pub use traits::{GeoTile, PipelineStage, SphericalPoint};

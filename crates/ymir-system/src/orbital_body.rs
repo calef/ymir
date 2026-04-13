@@ -111,7 +111,10 @@ mod tests {
             continental_fraction: None,
         };
         let cloned = body.clone();
-        assert_eq!(*cloned.semi_major_axis.inner(), *body.semi_major_axis.inner());
+        assert_eq!(
+            *cloned.semi_major_axis.inner(),
+            *body.semi_major_axis.inner()
+        );
         assert_eq!(cloned.planet_type, PlanetType::Terran);
         assert_eq!(cloned.name.as_deref(), Some("Earth"));
         assert!(!*cloned.tidal_locked.inner());

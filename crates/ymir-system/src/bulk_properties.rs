@@ -175,7 +175,11 @@ pub fn derive_body(
     // Axial tilt (degrees): uniform in [0, 45].
     let axial_tilt = body_rng.next_range(0.0, 45.0);
 
-    let locked = is_tidally_locked(placed.semi_major_axis, *star.mass.inner(), *star.age.inner());
+    let locked = is_tidally_locked(
+        placed.semi_major_axis,
+        *star.mass.inner(),
+        *star.age.inner(),
+    );
     let rotation_period = if locked {
         // Orbital period in hours (1 year ~ 8766 h).
         orbital_period_years(placed.semi_major_axis, *star.mass.inner()) * 365.25 * 24.0

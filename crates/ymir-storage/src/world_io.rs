@@ -63,9 +63,25 @@ impl WorldDirectory {
         self.root.join("overrides.json")
     }
 
+    /// Path to `provenance.json`.
+    pub fn provenance_path(&self) -> PathBuf {
+        self.root.join("provenance.json")
+    }
+
     /// Path to the `detail/` subdirectory for on-demand region chunks.
     pub fn detail_dir(&self) -> PathBuf {
         self.root.join("detail")
+    }
+
+    /// Path to the per-region detail artifact for `tile_index`, formatted
+    /// as `<root>/detail/region_NNNN.bin` with a zero-padded 4-digit index.
+    ///
+    /// The 4-digit padding covers up to 9999 tiles, which is enough for
+    /// geodesic subdivisions 0..=4 (subdiv-4 = 2562 tiles). Subdivision 5
+    /// yields 10242 tiles and will need 5-digit padding; widen the format
+    /// here if and when the default grid is pushed to subdiv-5.
+    pub fn region_path(&self, tile_index: u32) -> PathBuf {
+        self.detail_dir().join(region_file_name(tile_index))
     }
 
     /// Write a manifest to `manifest.json` inside this world directory.
@@ -77,6 +93,15 @@ impl WorldDirectory {
     pub fn load_manifest(&self) -> Result<WorldManifest, io::Error> {
         WorldManifest::load(&self.manifest_path())
     }
+}
+
+/// File-name segment for a per-region detail artifact, e.g. tile 5 → `region_0005.bin`.
+///
+/// Exposed separately from [`WorldDirectory::region_path`] so callers that
+/// only need the file name (log messages, test assertions) do not have to
+/// construct a full path.
+pub fn region_file_name(tile_index: u32) -> String {
+    format!("region_{tile_index:04}.bin")
 }
 
 #[cfg(test)]
@@ -101,6 +126,7 @@ mod tests {
                 enable_biology: false,
                 continental_fraction: Some(0.3),
             },
+            regions_generated: Vec::new(),
         }
     }
 
@@ -142,6 +168,33 @@ mod tests {
             PathBuf::from("/tmp/fake_world/overrides.json")
         );
         assert_eq!(wd.detail_dir(), PathBuf::from("/tmp/fake_world/detail"));
+    }
+
+    #[test]
+    fn region_path_format_zero_pads_four_digits() {
+        let wd = WorldDirectory {
+            root: PathBuf::from("/tmp/fake_world"),
+        };
+        assert_eq!(
+            wd.region_path(5),
+            PathBuf::from("/tmp/fake_world/detail/region_0005.bin")
+        );
+        assert_eq!(
+            wd.region_path(0),
+            PathBuf::from("/tmp/fake_world/detail/region_0000.bin")
+        );
+        assert_eq!(
+            wd.region_path(9999),
+            PathBuf::from("/tmp/fake_world/detail/region_9999.bin")
+        );
+    }
+
+    #[test]
+    fn region_file_name_zero_pads_four_digits() {
+        assert_eq!(region_file_name(0), "region_0000.bin");
+        assert_eq!(region_file_name(5), "region_0005.bin");
+        assert_eq!(region_file_name(162), "region_0162.bin");
+        assert_eq!(region_file_name(9999), "region_9999.bin");
     }
 
     #[test]

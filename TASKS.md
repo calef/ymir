@@ -992,7 +992,7 @@ Gotchas for downstream tasks:
 
 ### CORE-07: Provenance report (`provenance.json`)
 - **Crate:** ymir-core + ymir-storage + ymir (binary)
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** CORE-06
 - **Blocked:** no
 - **Model:** sonnet
@@ -1000,9 +1000,11 @@ Gotchas for downstream tasks:
 
 Dump per-field provenance to `<world>/provenance.json` (design doc §6.2). Structure: nested object mirroring the stage output tree, each leaf holding `{ value, source }` for the field. Produced during `ymir generate` and refreshed on `ymir regenerate`. CLI subcommand `ymir provenance --world PATH [--summary | --full]` prints either a histogram (N Observed / M Derived / K Assumed per stage) or the full dump. Tests: generate an Earth world; assert `provenance.json` exists, parses, and contains the expected field tree; the Observed count matches the override JSON.
 
+Debrief: New files: `crates/ymir-core/src/provenance.rs` (ProvenanceReport / StageProvenance / StageCounts types + tally_json walker + summary printer), `crates/ymir-storage/src/provenance_io.rs` (save_provenance / load_provenance). Modified: `crates/ymir-core/src/lib.rs` (re-exports), `crates/ymir-storage/src/lib.rs` (module + re-exports), `crates/ymir-storage/src/world_io.rs` (provenance_path() helper), `src/main.rs` (build_provenance, save_world_provenance, run_provenance helpers; Commands::Provenance variant; wired into run_generate and run_regenerate). JSON schema: per-field stages (stellar, orbital_body, atmosphere) emit the full serde_json tree so every `Sourced<T>` leaf appears as `{"value": ..., "source": {...}}`. Aggregate stages (skeleton, climate, biome) emit a compact `{"source": {"Derived": {"from_stage": "..."}}}` summary node to avoid per-tile array bloat. Gotchas for downstream: (a) `sol_context()` uses `from_params` so its catalog scalars are tagged `Assumed` not `Observed`; VALID-08 tests should account for this. (b) The `Sourced<T>` tally walker identifies leaves by the two-key `{value, source}` pattern; nested Sourced fields inside structs are walked recursively and each leaf is counted once. (c) The `build_provenance` function in main.rs takes `body` and `atmosphere` directly from the SkeletonWorld rather than from the original computation path, so overridden fields carry their post-override Source tags correctly.
+
 ### CORE-08: Override CLI authoring helpers
 - **Crate:** ymir (binary)
-- **Status:** pending
+- **Status:** ready
 - **Depends on:** CORE-06, CORE-07
 - **Blocked:** no
 - **Model:** sonnet
@@ -1032,7 +1034,7 @@ Unify the Mollweide outputs (`preview.png`, `preview_biome.png`) behind a single
 
 ### GUI-01: Scaffold `ymir-gui` crate
 - **Crate:** ymir-gui (new)
-- **Status:** pending
+- **Status:** ready
 - **Depends on:** CAT-08, CORE-07
 - **Blocked:** no
 - **Model:** opus
@@ -1124,7 +1126,7 @@ Integration test: open the fixture catalog, query for a known set of stars (Sol,
 
 ### VALID-08: Provenance dump validation
 - **Crate:** ymir (binary, integration tests)
-- **Status:** pending
+- **Status:** ready
 - **Depends on:** CORE-07
 - **Blocked:** no
 - **Model:** sonnet

@@ -13,12 +13,34 @@ members = [
 ]
 resolver = "3"
 
-[package]
-name = "ymir"
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+# TODO (INFRA-04): replace `TODO` with the real GitHub org/user once the repo is pushed.
+repository = "https://github.com/TODO/ymir"
+homepage = "https://github.com/TODO/ymir"
+readme = "README.md"
+rust-version = "1.88"
+authors = ["Christopher Alef and Ymir contributors"]
+
+[package]
+name = "ymir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+authors.workspace = true
 description = "A causal star-to-surface planet simulator grounded in real astronomical data"
+documentation = "https://docs.rs/ymir"
+keywords = ["simulation", "worldgen", "cli", "deterministic"]
+categories = ["command-line-utilities", "simulation"]
+# The `ymir` binary is an end-user CLI, not a reusable library. Keep it internal until a
+# distribution strategy is decided.
+publish = false
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -26,16 +48,19 @@ bincode = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ymir-core = { path = "crates/ymir-core" }
-ymir-catalog = { path = "crates/ymir-catalog" }
-ymir-system = { path = "crates/ymir-system" }
-ymir-atmosphere = { path = "crates/ymir-atmosphere" }
-ymir-surface = { path = "crates/ymir-surface" }
-ymir-climate = { path = "crates/ymir-climate" }
-ymir-biome = { path = "crates/ymir-biome" }
-ymir-detail = { path = "crates/ymir-detail" }
-ymir-render = { path = "crates/ymir-render" }
-ymir-storage = { path = "crates/ymir-storage" }
+ymir-core = { path = "crates/ymir-core", version = "0.1.0" }
+ymir-catalog = { path = "crates/ymir-catalog", version = "0.1.0" }
+ymir-system = { path = "crates/ymir-system", version = "0.1.0" }
+ymir-atmosphere = { path = "crates/ymir-atmosphere", version = "0.1.0" }
+ymir-surface = { path = "crates/ymir-surface", version = "0.1.0" }
+ymir-climate = { path = "crates/ymir-climate", version = "0.1.0" }
+ymir-biome = { path = "crates/ymir-biome", version = "0.1.0" }
+ymir-detail = { path = "crates/ymir-detail", version = "0.1.0" }
+ymir-render = { path = "crates/ymir-render", version = "0.1.0" }
+ymir-storage = { path = "crates/ymir-storage", version = "0.1.0" }
 
 [dev-dependencies]
 tempfile = "3"
+# Used by CLI-05 tests to validate that `ymir detail --output-image` writes
+# a decodable PNG.
+image = { version = "0.25", default-features = false, features = ["png"] }

@@ -365,7 +365,12 @@ impl StarContext {
                 "helioseismology + isochrones",
                 "2015-01-01",
             ),
-            Sourced::observed_on(0.0, "Heliocentric reference frame", "definitional", iau_date),
+            Sourced::observed_on(
+                0.0,
+                "Heliocentric reference frame",
+                "definitional",
+                iau_date,
+            ),
         )
     }
 

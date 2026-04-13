@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use std::ops::Deref;
+use std::ops::{Add, Deref, Div, Mul, Sub};
 
 /// Provenance tag for every value in the pipeline.
 ///
@@ -55,6 +55,71 @@ impl<T: Clone + Debug> Sourced<T> {
                 reference: reference.into(),
                 instrument: instrument.into(),
                 date: String::new(),
+                uncertainty: None,
+            },
+        }
+    }
+
+    /// Create an observed value with optional uncertainty and date.
+    ///
+    /// Full-surface constructor for catalog or override adapters that need to
+    /// supply every [`Source::Observed`] field at once.
+    pub fn observed_full(
+        value: T,
+        reference: impl Into<String>,
+        instrument: impl Into<String>,
+        date: impl Into<String>,
+        uncertainty: Option<f64>,
+    ) -> Self {
+        Self {
+            value,
+            source: Source::Observed {
+                reference: reference.into(),
+                instrument: instrument.into(),
+                date: date.into(),
+                uncertainty,
+            },
+        }
+    }
+
+    /// Mark an existing value as [`Source::Observed`] without changing its data.
+    ///
+    /// Handy for the override-application path where a partial JSON override
+    /// supplies a new numeric value but the override machinery also needs to
+    /// flip the Source tag from `Derived` to `Observed`.
+    pub fn mark_observed(
+        self,
+        reference: impl Into<String>,
+        instrument: impl Into<String>,
+    ) -> Self {
+        Self {
+            value: self.value,
+            source: Source::Observed {
+                reference: reference.into(),
+                instrument: instrument.into(),
+                date: String::new(),
+                uncertainty: None,
+            },
+        }
+    }
+
+    /// Create an observed value tagged with a release or observation date.
+    ///
+    /// Convenience for catalog adapters that carry a stable publication
+    /// date (e.g., Gaia DR3 was released on 2022-06-13). Equivalent to
+    /// building a `Source::Observed` variant by hand.
+    pub fn observed_on(
+        value: T,
+        reference: impl Into<String>,
+        instrument: impl Into<String>,
+        date: impl Into<String>,
+    ) -> Self {
+        Self {
+            value,
+            source: Source::Observed {
+                reference: reference.into(),
+                instrument: instrument.into(),
+                date: date.into(),
                 uncertainty: None,
             },
         }
@@ -112,6 +177,69 @@ impl<T: Clone + Debug> Deref for Sourced<T> {
 impl<T: Clone + Debug + PartialEq> PartialEq for Sourced<T> {
     fn eq(&self, other: &Self) -> bool {
         self.value == other.value && self.source == other.source
+    }
+}
+
+// Arithmetic convenience for `Sourced<f64>` used alongside a plain `f64`.
+// Result is the raw scalar; provenance is not propagated through compound
+// arithmetic (that's the caller's job: tag the final derived value
+// explicitly). These impls exist so downstream pipeline stages keep their
+// math expressions terse after the per-field wrapping refactor.
+macro_rules! impl_sourced_f64_binop {
+    ($trait:ident, $method:ident, $op:tt) => {
+        impl $trait<f64> for Sourced<f64> {
+            type Output = f64;
+            fn $method(self, rhs: f64) -> f64 {
+                self.value $op rhs
+            }
+        }
+        impl $trait<f64> for &Sourced<f64> {
+            type Output = f64;
+            fn $method(self, rhs: f64) -> f64 {
+                self.value $op rhs
+            }
+        }
+        impl $trait<Sourced<f64>> for f64 {
+            type Output = f64;
+            fn $method(self, rhs: Sourced<f64>) -> f64 {
+                self $op rhs.value
+            }
+        }
+        impl $trait<&Sourced<f64>> for f64 {
+            type Output = f64;
+            fn $method(self, rhs: &Sourced<f64>) -> f64 {
+                self $op rhs.value
+            }
+        }
+        impl $trait<Sourced<f64>> for Sourced<f64> {
+            type Output = f64;
+            fn $method(self, rhs: Sourced<f64>) -> f64 {
+                self.value $op rhs.value
+            }
+        }
+        impl $trait<&Sourced<f64>> for &Sourced<f64> {
+            type Output = f64;
+            fn $method(self, rhs: &Sourced<f64>) -> f64 {
+                self.value $op rhs.value
+            }
+        }
+    };
+}
+
+impl_sourced_f64_binop!(Mul, mul, *);
+impl_sourced_f64_binop!(Add, add, +);
+impl_sourced_f64_binop!(Sub, sub, -);
+impl_sourced_f64_binop!(Div, div, /);
+
+impl PartialEq<f64> for Sourced<f64> {
+    fn eq(&self, other: &f64) -> bool {
+        self.value == *other
+    }
+}
+
+impl PartialOrd<f64> for Sourced<f64> {
+    fn partial_cmp(&self, other: &f64) -> Option<std::cmp::Ordering> {
+        self.value.partial_cmp(other)
     }
 }
 

@@ -12,12 +12,17 @@ use ymir_catalog::exoplanets::ExoplanetRecord;
 use ymir_catalog::sol::sol_context;
 use ymir_catalog::star_context::StarContext;
 use ymir_climate::{ClimateConfig, ClimateMap};
-use ymir_core::{OverrideFile, PipelineDirtyState, Stage, StageOverrides, WorldRng};
+use ymir_core::{
+    OverrideFile, PipelineDirtyState, ProvenanceReport, Source, Stage, StageOverrides, WorldRng,
+    stable_derive_seed,
+};
+use ymir_detail::{RegionSpec, RegionalDetail, RegionalDetailConfig};
 use ymir_render::biome_mollweide::{BiomeRenderConfig, render_biome_mollweide};
 use ymir_render::globe_renderer::{GlobeRenderConfig, render_skeleton_mollweide_to_path};
+use ymir_render::regional::{RegionalRenderConfig, render_regional_detail};
 use ymir_storage::manifest::{GenerationConfig, WorldManifest};
 use ymir_storage::world_io::WorldDirectory;
-use ymir_storage::{load_bin, save_bin};
+use ymir_storage::{load_bin, load_provenance, save_bin, save_provenance};
 use ymir_surface::skeleton::SkeletonWorld;
 use ymir_system::{OrbitalBody, PlacementConfig, PlanetType, derive_body, place_planets};
 
@@ -72,6 +77,95 @@ enum Commands {
     Info {
         /// Path to the world directory.
         path: PathBuf,
+    },
+    /// Generate regional detail for a single skeleton tile and persist to
+    /// `<world>/detail/region_NNNN.bin`.
+    ///
+    /// Runs the DET-02..06 pipeline (hex grid, detail elevation, orographic
+    /// moisture, flow routing, biome refinement) for the seed tile plus
+    /// `radius` rings of neighbouring tiles. Updates the manifest's
+    /// `regions_generated` list and optionally writes a region preview PNG.
+    Detail {
+        /// Path to the world directory (must contain manifest.json + the
+        /// skeleton / climate / biome artifacts).
+        #[arg(long)]
+        world: PathBuf,
+        /// Tile index (into `world.grid.tiles`) to use as the region's seed
+        /// tile.
+        #[arg(long)]
+        region: u32,
+        /// Number of ring-expansions of neighbouring tiles to include.
+        #[arg(long, default_value_t = 1)]
+        radius: u32,
+        /// Optional PNG output path. If supplied, renders a regional PNG
+        /// alongside the `.bin` save.
+        #[arg(long)]
+        output_image: Option<PathBuf>,
+        /// Optional seed override for the detail stage's PRNG. Default is a
+        /// stable derivation from `(world_seed, tile_index)` so repeated
+        /// runs against the same world produce byte-identical regions.
+        #[arg(long)]
+        seed: Option<u64>,
+    },
+    /// List stars from the catalog matching optional spectral/distance/HZ filters.
+    ///
+    /// Loads the Gaia DR3 Parquet + NASA Exoplanet Archive CSV from
+    /// `--catalog-dir` (default `data/catalog`). If the real catalog files
+    /// are not on disk, falls back to the committed fixtures at
+    /// `crates/ymir-catalog/fixtures/gaia_sample.parquet` +
+    /// `crates/ymir-catalog/fixtures/exoplanet_sample.csv` so the command is
+    /// always runnable from a fresh checkout.
+    ListStars {
+        /// Directory holding `gaia_dr3_100pc.parquet` and
+        /// `exoplanet_archive.csv`. Falls back to the committed fixtures
+        /// in `crates/ymir-catalog/fixtures/` if the real files are absent.
+        #[arg(long, default_value = "data/catalog")]
+        catalog_dir: PathBuf,
+        /// Filter to a single Harvard spectral class letter (O/B/A/F/G/K/M).
+        #[arg(long)]
+        spectral_type: Option<String>,
+        /// Maximum distance in parsecs (inclusive).
+        #[arg(long)]
+        within_pc: Option<f64>,
+        /// Restrict to stars flagged as hosting at least one known HZ planet.
+        #[arg(long)]
+        has_planets: bool,
+        /// Maximum number of rows to print (sorted by distance ascending).
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// Print the full StarContext (catalog scalars, HZ edges, known planets)
+    /// for a single star resolved by common name or Gaia DR3 source ID.
+    ///
+    /// Uses the same `--catalog-dir` fallback rule as `list-stars`. "Sol" /
+    /// "Sun" resolve to a synthesized solar `StarContext` without touching
+    /// the catalog.
+    DescribeStar {
+        /// Common name or Gaia source ID, e.g. "Epsilon Eridani", "Sol",
+        /// or "5164707970261890560".
+        query: String,
+        /// Directory holding `gaia_dr3_100pc.parquet` and
+        /// `exoplanet_archive.csv`. Falls back to the committed fixtures
+        /// in `crates/ymir-catalog/fixtures/` if the real files are absent.
+        #[arg(long, default_value = "data/catalog")]
+        catalog_dir: PathBuf,
+    },
+    /// Print the provenance report for a generated world.
+    ///
+    /// Reads `<world>/provenance.json` (written by `ymir generate` and
+    /// refreshed by `ymir regenerate`). With `--summary` (default) prints a
+    /// per-stage histogram showing how many fields carry each source tag.
+    /// With `--full` pretty-prints the complete JSON report.
+    Provenance {
+        /// Path to the world directory (must contain `provenance.json`).
+        #[arg(long)]
+        world: PathBuf,
+        /// Print the full JSON dump instead of the per-stage histogram.
+        #[arg(long, conflicts_with = "summary")]
+        full: bool,
+        /// Print the per-stage histogram (default behaviour).
+        #[arg(long, conflicts_with = "full")]
+        summary: bool,
     },
     /// Recompute dirty stages of an existing world after applying an override file.
     ///
@@ -128,6 +222,19 @@ fn main() -> ExitCode {
             })
         }
         Commands::Info { path } => run_info(&path),
+        Commands::Detail {
+            world,
+            region,
+            radius,
+            output_image,
+            seed,
+        } => run_detail(&DetailArgs {
+            world,
+            region,
+            radius,
+            output_image,
+            seed,
+        }),
         Commands::Regenerate {
             world,
             overrides,
@@ -139,11 +246,39 @@ fn main() -> ExitCode {
             preview_width,
             preview_height,
         }),
+        Commands::ListStars {
+            catalog_dir,
+            spectral_type,
+            within_pc,
+            has_planets,
+            limit,
+        } => run_list_stars(&ListStarsArgs {
+            catalog_dir,
+            spectral_type,
+            within_pc,
+            has_planets,
+            limit,
+        }),
+        Commands::DescribeStar { query, catalog_dir } => {
+            run_describe_star(&DescribeStarArgs { query, catalog_dir })
+        }
+        Commands::Provenance {
+            world,
+            full,
+            summary: _,
+        } => run_provenance(&world, full),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("error: {err}");
+            // `describe-star` uses a `__nomatch__` sentinel prefix so the
+            // user-facing "No match for '...'" message lands on stderr
+            // without being prefixed by the generic `error: ` banner.
+            if let Some(msg) = err.strip_prefix("__nomatch__") {
+                eprintln!("{msg}");
+            } else {
+                eprintln!("error: {err}");
+            }
             ExitCode::FAILURE
         }
     }
@@ -169,6 +304,7 @@ struct GenerateArgs {
 /// property derivation; `Fixed` bypasses those stages and uses hand-filled
 /// observational values for Solar-system references (Earth, Mars).
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 enum StarSelection {
     /// Tau Ceti path: derive the chosen body via placement + `derive_body`.
     Derived {
@@ -189,23 +325,33 @@ enum StarSelection {
 /// `place_planets` + `derive_body` here because we want ground-truth values,
 /// not a statistical re-derivation from the placement sampler.
 fn earth_body() -> OrbitalBody {
+    let obs = |v: f64| ymir_core::Sourced::observed(v, "IAU / NASA planetary fact sheet", "Earth");
     OrbitalBody {
-        semi_major_axis: 1.0,
-        eccentricity: 0.0167,
-        inclination: 0.0,
-        axial_tilt: 23.4,
-        mass: 1.0,
-        radius: 1.0,
-        density: 5.51,
-        surface_gravity: 9.81,
-        solar_irradiance: 1361.0,
-        equilibrium_temp: 254.0,
-        tidal_locked: false,
-        rotation_period: 24.0,
+        semi_major_axis: obs(1.0),
+        eccentricity: obs(0.0167),
+        inclination: obs(0.0),
+        axial_tilt: obs(23.4),
+        mass: obs(1.0),
+        radius: obs(1.0),
+        density: obs(5.51),
+        surface_gravity: obs(9.81),
+        solar_irradiance: obs(1361.0),
+        equilibrium_temp: obs(254.0),
+        tidal_locked: ymir_core::Sourced::observed(
+            false,
+            "IAU / NASA planetary fact sheet",
+            "Earth",
+        ),
+        rotation_period: obs(24.0),
         is_in_hz: true,
         planet_type: PlanetType::Terran,
         name: Some("Earth".to_string()),
         is_known_exoplanet: false,
+        continental_fraction: Some(ymir_core::Sourced::observed(
+            0.29,
+            "Earth hypsometric curve (ETOPO1, NOAA NGDC 2009)",
+            "global bathymetry + topography",
+        )),
     }
 }
 
@@ -213,23 +359,33 @@ fn earth_body() -> OrbitalBody {
 /// Used when `--star Mars` is passed. Like [`earth_body`], bypasses the
 /// placement + derivation stages to preserve ground-truth values.
 fn mars_body() -> OrbitalBody {
+    let obs = |v: f64| ymir_core::Sourced::observed(v, "IAU / NASA planetary fact sheet", "Mars");
     OrbitalBody {
-        semi_major_axis: 1.524,
-        eccentricity: 0.0934,
-        inclination: 0.0,
-        axial_tilt: 25.19,
-        mass: 0.107,
-        radius: 0.532,
-        density: 3.93,
-        surface_gravity: 3.72,
-        solar_irradiance: 588.0,
-        equilibrium_temp: 210.0,
-        tidal_locked: false,
-        rotation_period: 24.6,
+        semi_major_axis: obs(1.524),
+        eccentricity: obs(0.0934),
+        inclination: obs(0.0),
+        axial_tilt: obs(25.19),
+        mass: obs(0.107),
+        radius: obs(0.532),
+        density: obs(3.93),
+        surface_gravity: obs(3.72),
+        solar_irradiance: obs(588.0),
+        equilibrium_temp: obs(210.0),
+        tidal_locked: ymir_core::Sourced::observed(
+            false,
+            "IAU / NASA planetary fact sheet",
+            "Mars",
+        ),
+        rotation_period: obs(24.6),
         is_in_hz: false,
         planet_type: PlanetType::Terran,
         name: Some("Mars".to_string()),
         is_known_exoplanet: false,
+        continental_fraction: Some(ymir_core::Sourced::observed(
+            1.0,
+            "Mars topography (MOLA, NASA MGS 2001)",
+            "Mars Orbiter Laser Altimeter",
+        )),
     }
 }
 
@@ -301,9 +457,8 @@ fn compute_upstream(
         StarSelection::Fixed { star, body } => {
             if planet_index != 0 {
                 return Err(format!(
-                    "--planet must be 0 for hand-filled Sol-system bodies (got {}); \
-                     Earth and Mars are returned as single fixed bodies",
-                    planet_index
+                    "--planet must be 0 for hand-filled Sol-system bodies (got {planet_index}); \
+                     Earth and Mars are returned as single fixed bodies"
                 ));
             }
             (star, body)
@@ -388,6 +543,12 @@ where
 /// key; everything else is replaced wholesale. This mirrors the common
 /// "deep-merge JSON" pattern and keeps override files terse (callers supply
 /// only the fields they want to change).
+///
+/// `Sourced<T>` shim: if the target is a two-key object with `value` +
+/// `source` (the serialized shape of `Sourced<T>`) and the patch is a bare
+/// scalar/array/null, the patch is re-shaped into
+/// `{value: <patch>, source: Observed{reference: "user override", ...}}` so
+/// the override automatically flips the field's provenance tag to Observed.
 fn merge_json(target: &mut serde_json::Value, patch: &serde_json::Value) {
     match (target, patch) {
         (serde_json::Value::Object(t), serde_json::Value::Object(p)) => {
@@ -396,9 +557,42 @@ fn merge_json(target: &mut serde_json::Value, patch: &serde_json::Value) {
             }
         }
         (t, p) => {
-            *t = p.clone();
+            if is_sourced_shape(t) && !matches!(p, serde_json::Value::Object(_)) {
+                // Wrap the scalar patch into the Sourced envelope and tag
+                // the source as user-supplied Observed.
+                let wrapped = make_user_observed_sourced_json(p.clone());
+                *t = wrapped;
+            } else {
+                *t = p.clone();
+            }
         }
     }
+}
+
+/// Returns true if `v` is a JSON object matching the serialized `Sourced<T>`
+/// shape: exactly the keys `value` and `source`.
+fn is_sourced_shape(v: &serde_json::Value) -> bool {
+    let serde_json::Value::Object(map) = v else {
+        return false;
+    };
+    map.len() == 2 && map.contains_key("value") && map.contains_key("source")
+}
+
+/// Build a JSON value representing `Sourced { value, source: Observed { .. } }`
+/// with provenance tagged as a user override.
+fn make_user_observed_sourced_json(value: serde_json::Value) -> serde_json::Value {
+    let source = serde_json::json!({
+        "Observed": {
+            "reference": "user override",
+            "instrument": "ymir CLI --override",
+            "date": "",
+            "uncertainty": null,
+        }
+    });
+    serde_json::json!({
+        "value": value,
+        "source": source,
+    })
 }
 
 /// Render the elevation preview PNG.
@@ -529,11 +723,22 @@ fn run_generate(args: &GenerateArgs) -> Result<(), String> {
         config: GenerationConfig {
             grid_subdivision_level: args.subdivision,
             enable_biology: args.enable_biology,
-            continental_fraction: None,
+            continental_fraction: body.continental_fraction.as_ref().map(|s| *s.inner()),
         },
+        regions_generated: Vec::new(),
     };
     wd.save_manifest(&manifest)
         .map_err(|e| format!("failed to save manifest: {e}"))?;
+
+    let provenance = build_provenance(
+        &star_ctx,
+        &skeleton.body,
+        &skeleton.atmosphere,
+        &skeleton,
+        climate.as_ref(),
+        biomes.as_ref(),
+    )?;
+    save_world_provenance(&wd, &provenance)?;
 
     println!();
     print_summary(
@@ -719,6 +924,25 @@ fn run_regenerate(args: &RegenerateArgs) -> Result<(), String> {
     wd.save_manifest(&manifest)
         .map_err(|e| format!("failed to save manifest: {e}"))?;
 
+    // Refresh provenance.json to reflect any source-tag changes from overrides.
+    let provenance = build_provenance(
+        // We don't have the StarContext readily available in regenerate (it's
+        // not persisted standalone). Re-derive it from the star name recorded
+        // in the manifest so provenance stays accurate.
+        &lookup_star(star_name)
+            .map(|sel| match sel {
+                StarSelection::Derived { star, .. } => star,
+                StarSelection::Fixed { star, .. } => star,
+            })
+            .unwrap_or_else(|_| sol_context()),
+        &skeleton.body,
+        &skeleton.atmosphere,
+        &skeleton,
+        climate.as_ref(),
+        biomes.as_ref(),
+    )?;
+    save_world_provenance(&wd, &provenance)?;
+
     println!();
     println!(
         "Regenerate complete. Overrides applied: [{}]",
@@ -743,6 +967,180 @@ fn run_regenerate(args: &RegenerateArgs) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Resolved arguments for the `detail` subcommand.
+struct DetailArgs {
+    world: PathBuf,
+    region: u32,
+    radius: u32,
+    output_image: Option<PathBuf>,
+    seed: Option<u64>,
+}
+
+/// Run the regional detail pipeline for a single tile and persist the
+/// resulting [`RegionalDetail`] to `<world>/detail/region_NNNN.bin`.
+///
+/// The seed for the detail PRNG defaults to
+/// `stable_derive_seed(world_seed, tile_index)` so re-running the command
+/// against the same world reproduces byte-identical region files. Callers
+/// can override with `--seed` for experimentation.
+fn run_detail(args: &DetailArgs) -> Result<(), String> {
+    let wd = WorldDirectory {
+        root: args.world.clone(),
+    };
+    if !wd.manifest_path().exists() {
+        return Err(format!(
+            "manifest.json not found in {} (is this a ymir world directory?)",
+            args.world.display()
+        ));
+    }
+
+    let mut manifest = wd.load_manifest().map_err(|e| {
+        format!(
+            "failed to load manifest at {}: {}",
+            wd.manifest_path().display(),
+            e
+        )
+    })?;
+
+    if !wd.skeleton_path().exists() {
+        return Err(format!(
+            "skeleton.bin missing from {} (run `ymir generate` first)",
+            args.world.display()
+        ));
+    }
+    if !wd.climate_path().exists() {
+        return Err(format!(
+            "climate.bin missing from {} (world was generated with --skip-climate)",
+            args.world.display()
+        ));
+    }
+    if !wd.biomes_path().exists() {
+        return Err(format!(
+            "biomes.bin missing from {} (world was generated with --skip-biomes)",
+            args.world.display()
+        ));
+    }
+
+    let skeleton = load_skeleton(&wd)?;
+    let climate = load_climate(&wd)?;
+    let biomes = load_biomes(&wd)?;
+
+    let tile_count = skeleton.grid.tiles.len();
+    if (args.region as usize) >= tile_count {
+        return Err(format!(
+            "--region {} out of range (world has {} tiles)",
+            args.region, tile_count
+        ));
+    }
+
+    let resolved_seed = args
+        .seed
+        .unwrap_or_else(|| stable_derive_seed(manifest.seed, args.region as u64));
+
+    let spec = RegionSpec::new(args.region, args.radius);
+    let detail_cfg = RegionalDetailConfig {
+        seed: resolved_seed,
+        ..RegionalDetailConfig::default()
+    };
+
+    println!(
+        "[detail] tile {} radius {} (seed = {:#x}, world seed = {})",
+        args.region, args.radius, resolved_seed, manifest.seed
+    );
+    let region = RegionalDetail::build(&skeleton, &climate, &biomes, spec, detail_cfg);
+
+    let path = save_region(&wd, &mut manifest, &region)?;
+    wd.save_manifest(&manifest)
+        .map_err(|e| format!("failed to save manifest: {e}"))?;
+    println!("[detail] wrote {}", path.display());
+
+    print_region_summary(&region);
+
+    if let Some(img_path) = &args.output_image {
+        println!("[detail] rendering preview to {}", img_path.display());
+        let render_cfg = RegionalRenderConfig::default();
+        let img = render_regional_detail(&region, &skeleton, &render_cfg);
+        img.save(img_path).map_err(|e| {
+            format!(
+                "failed to write region preview {}: {}",
+                img_path.display(),
+                e
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
+/// Print the human-readable summary for a freshly-built [`RegionalDetail`].
+///
+/// Histogram is sorted by hex count descending, ties broken by the
+/// debug-formatted biome variant name for determinism.
+fn print_region_summary(region: &RegionalDetail) {
+    let n = region.hex_grid.cells.len();
+    let elevs = &region.elevation.per_hex_m;
+
+    let (mut min_e, mut max_e, mut sum_e) = (f64::INFINITY, f64::NEG_INFINITY, 0.0_f64);
+    for &e in elevs {
+        if e < min_e {
+            min_e = e;
+        }
+        if e > max_e {
+            max_e = e;
+        }
+        sum_e += e;
+    }
+    let mean_e = if n == 0 { 0.0 } else { sum_e / n as f64 };
+
+    let river_threshold = ymir_detail::DetailBiomeConfig::default().river_flow_threshold;
+    let river_count = region
+        .flow
+        .flow_accumulation
+        .iter()
+        .zip(region.flow.is_lake.iter())
+        .filter(|&(&acc, &lake)| !lake && acc >= river_threshold)
+        .count();
+    let lake_count = region.flow.is_lake.iter().filter(|&&l| l).count();
+
+    println!(
+        "Region tile {} (radius {}): {} hexes",
+        region.spec.tile_index, region.spec.radius_tiles, n
+    );
+    if n > 0 {
+        println!("Elevation: min={min_e:.1} m, max={max_e:.1} m, mean={mean_e:.1} m");
+    }
+    println!(
+        "Rivers: {river_count} hexes (accumulation >= {river_threshold:.1}); \
+         Lakes: {lake_count} hexes"
+    );
+
+    if n == 0 {
+        return;
+    }
+
+    let mut counts: std::collections::HashMap<ymir_biome::Biome, usize> =
+        std::collections::HashMap::new();
+    for &b in &region.biomes.per_hex {
+        *counts.entry(b).or_insert(0) += 1;
+    }
+    let mut hist: Vec<(ymir_biome::Biome, usize)> = counts.into_iter().collect();
+    hist.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)))
+    });
+
+    println!("Biome histogram:");
+    for (biome, count) in hist.iter() {
+        let pct = (*count as f64) / (n as f64) * 100.0;
+        println!(
+            "  {:<24} {:>6}  ({:.1}%)",
+            format!("{:?}", biome),
+            count,
+            pct
+        );
+    }
 }
 
 /// Bincode-serialize a [`SkeletonWorld`] to `<world>/skeleton.bin`.
@@ -803,6 +1201,150 @@ fn load_biomes(wd: &WorldDirectory) -> Result<BiomeMap, String> {
     load_bin(&path).map_err(|e| format!("failed to load biomes at {}: {}", path.display(), e))
 }
 
+/// Bincode-serialize a [`RegionalDetail`] to
+/// `<world>/detail/region_NNNN.bin`, creating the `detail/` subdirectory if
+/// it does not already exist and recording the parent skeleton tile index
+/// in `manifest`.
+///
+/// `ymir-storage` cannot depend on `ymir-detail` (see the crate graph in
+/// `CLAUDE.md`), so the concrete region writer lives in the binary crate
+/// and delegates to the generic [`save_bin`] helper. The manifest is left
+/// dirty (not persisted) so callers can batch multiple region saves with a
+/// single [`WorldDirectory::save_manifest`] call at the end.
+///
+/// Used by the `ymir detail` subcommand.
+fn save_region(
+    wd: &WorldDirectory,
+    manifest: &mut WorldManifest,
+    region: &RegionalDetail,
+) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(wd.detail_dir())
+        .map_err(|e| format!("failed to create {}: {}", wd.detail_dir().display(), e))?;
+    let tile_index = region.spec.tile_index;
+    let path = wd.region_path(tile_index);
+    save_bin(&path, region)
+        .map_err(|e| format!("failed to serialize region to {}: {}", path.display(), e))?;
+    manifest.mark_region_generated(tile_index);
+    Ok(path)
+}
+
+/// Load a previously saved [`RegionalDetail`] from
+/// `<world>/detail/region_NNNN.bin`.
+///
+/// Currently only exercised through the binary's test suite; kept for
+/// parity with [`save_region`] and for future read-only commands (e.g.
+/// `ymir detail-info`).
+#[allow(dead_code)]
+fn load_region(wd: &WorldDirectory, tile_index: u32) -> Result<RegionalDetail, String> {
+    let path = wd.region_path(tile_index);
+    load_bin(&path).map_err(|e| format!("failed to load region at {}: {}", path.display(), e))
+}
+
+// ---------------------------------------------------------------------------
+// Provenance helpers
+// ---------------------------------------------------------------------------
+
+/// Build a [`ProvenanceReport`] from the fully-computed pipeline outputs.
+///
+/// Per-field stages (stellar, orbital_body, atmosphere) are serialized in
+/// full so every `Sourced<T>` leaf appears as a `{ value, source }` node.
+/// Aggregate stages (skeleton, climate, biome) emit a compact summary node
+/// because their per-tile arrays would balloon the file to many megabytes.
+fn build_provenance(
+    star: &StarContext,
+    body: &OrbitalBody,
+    atmosphere: &AtmosphereModel,
+    _skeleton: &SkeletonWorld,
+    climate: Option<&ClimateMap>,
+    biomes: Option<&BiomeMap>,
+) -> Result<ProvenanceReport, String> {
+    let mut report = ProvenanceReport::new();
+
+    // Stage 1: stellar context (per-field Sourced<T>).
+    report.add_perfield_stage("stellar", star)?;
+
+    // Stage 2: orbital body (per-field Sourced<T>).
+    report.add_perfield_stage("orbital_body", body)?;
+
+    // Stage 3: atmosphere (per-field Sourced<T>).
+    report.add_perfield_stage("atmosphere", atmosphere)?;
+
+    // Stage 4: skeleton — aggregate tag (no per-tile serialisation).
+    report.add_aggregate_stage(
+        "skeleton",
+        &Source::Derived {
+            from_stage: "skeleton".to_string(),
+        },
+    );
+
+    // Stage 5: climate — aggregate tag, only if computed.
+    if climate.is_some() {
+        report.add_aggregate_stage(
+            "climate",
+            &Source::Derived {
+                from_stage: "climate".to_string(),
+            },
+        );
+    }
+
+    // Stage 6: biome — aggregate tag, only if computed.
+    if biomes.is_some() {
+        report.add_aggregate_stage(
+            "biome",
+            &Source::Derived {
+                from_stage: "biome".to_string(),
+            },
+        );
+    }
+
+    Ok(report)
+}
+
+/// Write `provenance.json` to the world directory.
+fn save_world_provenance(wd: &WorldDirectory, report: &ProvenanceReport) -> Result<(), String> {
+    let path = wd.provenance_path();
+    save_provenance(&path, report).map_err(|e| {
+        format!(
+            "failed to write provenance.json at {}: {}",
+            path.display(),
+            e
+        )
+    })
+}
+
+/// Run `ymir provenance [--world PATH] [--summary | --full]`.
+///
+/// Loads `<world>/provenance.json` and either prints the per-stage histogram
+/// (default / `--summary`) or pretty-prints the full JSON (`--full`).
+fn run_provenance(world: &std::path::Path, full: bool) -> Result<(), String> {
+    let wd = WorldDirectory {
+        root: world.to_path_buf(),
+    };
+    let path = wd.provenance_path();
+    if !path.exists() {
+        return Err(format!(
+            "provenance.json not found in {} \
+             (run `ymir generate` to create it)",
+            world.display()
+        ));
+    }
+
+    let report =
+        load_provenance(&path).map_err(|e| format!("failed to load {}: {}", path.display(), e))?;
+
+    if full {
+        let json = report
+            .to_pretty_json()
+            .map_err(|e| format!("failed to format provenance JSON: {e}"))?;
+        println!("{json}");
+    } else {
+        println!("Provenance summary for {}", world.display());
+        report.print_summary();
+    }
+
+    Ok(())
+}
+
 /// Compute (min, mean, max) elevation from a [`SkeletonWorld`].
 fn elevation_stats(skeleton: &SkeletonWorld) -> (f64, f64, f64) {
     let elevs = &skeleton.elevation.elevations_m;
@@ -845,20 +1387,24 @@ fn print_summary(
     println!("=== Generation summary ===");
     println!("Star:            {star_name} ({})", star.catalog_id);
     println!("Planet:          {planet_label} (index {planet_index})");
-    println!("Semi-major axis: {:.4} AU", body.semi_major_axis);
+    println!("Semi-major axis: {:.4} AU", body.semi_major_axis.inner());
     println!(
         "Mass / Radius:   {:.3} M_earth / {:.3} R_earth ({:?})",
-        body.mass, body.radius, body.planet_type
+        body.mass.inner(),
+        body.radius.inner(),
+        body.planet_type
     );
-    println!("Surface gravity: {:.3} m/s^2", body.surface_gravity);
+    println!("Surface gravity: {:.3} m/s^2", body.surface_gravity.inner());
     println!(
         "T_eq / T_surf:   {:.1} K / {:.1} K (in HZ: {})",
-        body.equilibrium_temp, atmo.effective_surface_temp, body.is_in_hz
+        body.equilibrium_temp.inner(),
+        atmo.effective_surface_temp.inner(),
+        body.is_in_hz
     );
     println!(
         "Atmosphere:      {:?}, P = {:.4} bar, retained gases = {}",
         atmo.class,
-        atmo.surface_pressure,
+        atmo.surface_pressure.inner(),
         atmo.retained.len()
     );
     println!(
@@ -992,13 +1538,13 @@ fn print_manifest(m: &WorldManifest) {
 
     println!("World: {} (seed: {})", planet_label, m.seed);
     if let Some(catalog_id) = &m.star_catalog_id {
-        println!("Star catalog ID: {}", catalog_id);
+        println!("Star catalog ID: {catalog_id}");
     }
     println!("Created: {}", m.created_at);
     println!("Manifest version: {}", m.version);
     println!("Pipeline version: {}", m.pipeline_version);
     if let Some(overrides) = &m.overrides_file {
-        println!("Overrides file: {}", overrides);
+        println!("Overrides file: {overrides}");
     }
     println!();
 
@@ -1017,7 +1563,7 @@ fn print_config(cfg: &GenerationConfig) {
     println!("  Grid subdivision: {}", cfg.grid_subdivision_level);
     println!("  Biology enabled: {}", cfg.enable_biology);
     match cfg.continental_fraction {
-        Some(v) => println!("  Continental fraction: {:.3}", v),
+        Some(v) => println!("  Continental fraction: {v:.3}"),
         None => println!("  Continental fraction: default (physics-derived)"),
     }
 }
@@ -1028,25 +1574,44 @@ fn print_skeleton_section(skeleton: &SkeletonWorld) {
     let (e_min, e_mean, e_max) = elevation_stats(skeleton);
 
     println!("Body:");
-    println!("  Mass:            {:.3} M_earth", body.mass);
-    println!("  Radius:          {:.3} R_earth", body.radius);
-    println!("  Surface gravity: {:.3} m/s^2", body.surface_gravity);
-    println!("  Equilibrium T:   {:.1} K", body.equilibrium_temp);
+    println!("  Mass:            {:.3} M_earth", body.mass.inner());
+    println!("  Radius:          {:.3} R_earth", body.radius.inner());
+    println!(
+        "  Surface gravity: {:.3} m/s^2",
+        body.surface_gravity.inner()
+    );
+    println!("  Equilibrium T:   {:.1} K", body.equilibrium_temp.inner());
     println!("  In HZ:           {}", body.is_in_hz);
 
     println!("Atmosphere:");
     println!("  Class:           {:?}", atmo.class);
-    println!("  Surface pressure:{:.4} bar", atmo.surface_pressure);
-    println!("  Surface T (eff): {:.1} K", atmo.effective_surface_temp);
+    println!(
+        "  Surface pressure:{:.4} bar",
+        atmo.surface_pressure.inner()
+    );
+    println!(
+        "  Surface T (eff): {:.1} K",
+        atmo.effective_surface_temp.inner()
+    );
     println!("  Retained gases:  {}", atmo.retained.len());
 
-    println!(
-        "Elevation ({} tiles):",
-        skeleton.elevation.elevations_m.len()
-    );
-    println!("  Min:  {:.1} m", e_min);
-    println!("  Mean: {:.1} m", e_mean);
-    println!("  Max:  {:.1} m", e_max);
+    let total = skeleton.elevation.elevations_m.len();
+    let ocean = skeleton
+        .elevation
+        .elevations_m
+        .iter()
+        .filter(|&&e| e < 0.0)
+        .count();
+    let ocean_frac = if total == 0 {
+        0.0
+    } else {
+        ocean as f64 / total as f64
+    };
+    println!("Elevation ({total} tiles):");
+    println!("  Min:  {e_min:.1} m");
+    println!("  Mean: {e_mean:.1} m");
+    println!("  Max:  {e_max:.1} m");
+    println!("  Ocean tiles (elev < 0): {ocean} / {total} ({ocean_frac:.3})");
 }
 
 fn print_climate_section(climate: &ClimateMap) {
@@ -1063,10 +1628,7 @@ fn print_climate_section(climate: &ClimateMap) {
     let m_mean = climate.moisture.mean();
     let m_coverage = climate.moisture.coverage_above(0.5);
 
-    println!(
-        "  Temperature:     mean {:.1} K (min {:.1} K, max {:.1} K)",
-        t_mean, t_min, t_max
-    );
+    println!("  Temperature:     mean {t_mean:.1} K (min {t_min:.1} K, max {t_max:.1} K)");
     println!(
         "  Moisture:        mean {:.3}, coverage >0.5 = {:.1}%",
         m_mean,
@@ -1102,6 +1664,252 @@ fn print_biome_section(biomes: &BiomeMap) {
     if hist.len() > 10 {
         println!("  ... and {} more biome(s)", hist.len() - 10);
     }
+}
+
+/// Resolved arguments for the `list-stars` subcommand.
+struct ListStarsArgs {
+    catalog_dir: PathBuf,
+    spectral_type: Option<String>,
+    within_pc: Option<f64>,
+    has_planets: bool,
+    limit: usize,
+}
+
+/// Resolved arguments for the `describe-star` subcommand.
+struct DescribeStarArgs {
+    query: String,
+    catalog_dir: PathBuf,
+}
+
+/// Resolve the Gaia Parquet + Exoplanet CSV paths from `--catalog-dir`,
+/// falling back to the committed fixtures if either real file is absent.
+///
+/// Keeps the command runnable from a fresh checkout without requiring the
+/// 100+ MB Gaia download; documented in each subcommand's `--help`.
+fn resolve_catalog_paths(catalog_dir: &Path) -> (PathBuf, PathBuf) {
+    let gaia_real = catalog_dir.join("gaia_dr3_100pc.parquet");
+    let exo_real = catalog_dir.join("exoplanet_archive.csv");
+    if gaia_real.is_file() && exo_real.is_file() {
+        return (gaia_real, exo_real);
+    }
+    // Fixtures live at the workspace root, relative to the current working
+    // directory. The binary is always invoked from the workspace root in
+    // CI and during integration tests (cargo sets CWD there).
+    let fallback_dir = PathBuf::from("crates/ymir-catalog/fixtures");
+    (
+        fallback_dir.join("gaia_sample.parquet"),
+        fallback_dir.join("exoplanet_sample.csv"),
+    )
+}
+
+/// Parse a one-letter spectral class argument. Accepts upper- or lowercase.
+fn parse_spectral_class(s: &str) -> Result<ymir_catalog::star_context::SpectralClass, String> {
+    use ymir_catalog::star_context::SpectralClass;
+    match s.trim().to_ascii_uppercase().as_str() {
+        "O" => Ok(SpectralClass::O),
+        "B" => Ok(SpectralClass::B),
+        "A" => Ok(SpectralClass::A),
+        "F" => Ok(SpectralClass::F),
+        "G" => Ok(SpectralClass::G),
+        "K" => Ok(SpectralClass::K),
+        "M" => Ok(SpectralClass::M),
+        other => Err(format!(
+            "invalid spectral class '{other}' (expected one of O, B, A, F, G, K, M)"
+        )),
+    }
+}
+
+/// Run `ymir list-stars`. Prints a plain-ASCII table of matching stars
+/// sorted by distance ascending, truncated to `--limit` rows.
+fn run_list_stars(args: &ListStarsArgs) -> Result<(), String> {
+    use ymir_catalog::{Catalog, CatalogQuery};
+
+    let (gaia_path, exo_path) = resolve_catalog_paths(&args.catalog_dir);
+    let catalog =
+        Catalog::open(&gaia_path, &exo_path).map_err(|e| format!("failed to open catalog: {e}"))?;
+
+    let spectral = match &args.spectral_type {
+        Some(s) => Some(parse_spectral_class(s)?),
+        None => None,
+    };
+    let query = CatalogQuery {
+        spectral,
+        min_distance_pc: None,
+        max_distance_pc: args.within_pc,
+        hz_hosts_only: args.has_planets,
+    };
+
+    let mut results = catalog.list(&query);
+    results.sort_by(|a, b| {
+        a.distance_pc
+            .partial_cmp(&b.distance_pc)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    results.truncate(args.limit);
+
+    // Header. Column widths chosen so real-catalog rows fit in ~100 chars:
+    // gaia_id up to 20 digits, name up to 24 chars, spectral like "M4", etc.
+    println!(
+        "{:<20} {:<24} {:<8} {:>11} {:>8} {:>8} {:<14}",
+        "gaia_id", "name", "spectral", "distance_pc", "teff_K", "L_sun", "has_hz_planet"
+    );
+    println!(
+        "{:-<20} {:-<24} {:-<8} {:->11} {:->8} {:->8} {:-<14}",
+        "", "", "", "", "", "", ""
+    );
+    for s in &results {
+        let name = s.common_name.as_deref().unwrap_or("-");
+        let name_display = if name.len() > 24 {
+            // Truncate gracefully rather than smearing the column layout.
+            let mut t = name[..23].to_string();
+            t.push('…');
+            t
+        } else {
+            name.to_string()
+        };
+        let spectral = format!("{}{}", s.spectral.class, s.spectral.subtype);
+        let has_hz = if s.has_hz_planet { "yes" } else { "no" };
+        println!(
+            "{:<20} {:<24} {:<8} {:>11.2} {:>8.0} {:>8.3} {:<14}",
+            s.gaia_id, name_display, spectral, s.distance_pc, s.teff_k, s.luminosity_sun, has_hz
+        );
+    }
+    Ok(())
+}
+
+/// Run `ymir describe-star`. Prints a structured, human-readable dump of
+/// the resolved `StarContext`, including catalog provenance, HZ edges, and
+/// any known exoplanets.
+fn run_describe_star(args: &DescribeStarArgs) -> Result<(), String> {
+    use ymir_catalog::Catalog;
+
+    let (gaia_path, exo_path) = resolve_catalog_paths(&args.catalog_dir);
+    let catalog =
+        Catalog::open(&gaia_path, &exo_path).map_err(|e| format!("failed to open catalog: {e}"))?;
+
+    let Some(ctx) = catalog.resolve(&args.query) else {
+        // Print the canonical "No match" message to stderr and bail with
+        // a non-zero exit code. Returning an `Err` here would make `main`
+        // print a second `error: ...` line; we use a sentinel that main
+        // recognizes and swallows.
+        return Err(format!("__nomatch__No match for '{}'", args.query));
+    };
+
+    // Also pull the raw exoplanet rows for the detailed planet table; the
+    // `StarContext` only carries name strings in `known_exoplanets`.
+    let planets: Vec<_> = extract_gaia_id(&ctx.catalog_id)
+        .map(|gid| catalog.exoplanets_for(gid).to_vec())
+        .unwrap_or_default();
+
+    let display_name = ctx.name.clone().unwrap_or_else(|| args.query.clone());
+    println!("Star: {} ({})", display_name, ctx.catalog_id);
+    println!();
+
+    println!("Catalog");
+    // For stars with no Gaia row (Sol), RA/Dec is not meaningful; fall back
+    // to "-" there. `from_catalog` does not populate RA/Dec on StarContext
+    // itself, so we pull those from the summary if available.
+    let summary = extract_gaia_id(&ctx.catalog_id).and_then(|gid| catalog.summary(gid));
+    if let Some(s) = &summary {
+        println!("  RA/Dec:      {:.4}° / {:.4}°", s.ra_deg, s.dec_deg);
+    } else {
+        println!("  RA/Dec:      - / -");
+    }
+
+    let dist_src = format_source(ctx.distance.source());
+    let teff_src = format_source(ctx.effective_temp.source());
+    let lum_src = format_source(ctx.luminosity.source());
+    println!(
+        "  Distance:    {:.2} pc            {}",
+        ctx.distance.inner(),
+        dist_src
+    );
+    println!(
+        "  Teff:        {:.0} K             {}",
+        ctx.effective_temp.inner(),
+        teff_src
+    );
+    println!(
+        "  Luminosity:  {:.3} L_sun         {}",
+        ctx.luminosity.inner(),
+        lum_src
+    );
+    println!("  Spectral:    {}", ctx.spectral_type);
+    println!();
+
+    println!("Habitable Zone");
+    println!("  Inner: {:.3} AU", ctx.hz_inner.inner());
+    println!("  Outer: {:.3} AU", ctx.hz_outer.inner());
+    println!();
+
+    if planets.is_empty() {
+        println!("Known exoplanets (0)");
+        println!("  (none in catalog)");
+    } else {
+        println!("Known exoplanets ({})", planets.len());
+        for p in &planets {
+            let label = if p.planet_letter.is_empty() {
+                p.host_name.clone()
+            } else {
+                format!("{} {}", p.host_name, p.planet_letter)
+            };
+            let period = p
+                .orbital_period_days
+                .map(|v| format!("P={v:.0} d"))
+                .unwrap_or_else(|| "P=?".to_string());
+            let sma = p
+                .semi_major_axis_au
+                .map(|v| format!("a={v:.2} AU"))
+                .unwrap_or_else(|| "a=?".to_string());
+            let mass = p
+                .planet_mass_earth
+                .map(|v| format!("m={v:.2} M_earth"))
+                .unwrap_or_else(|| "m=?".to_string());
+            let radius = p
+                .planet_radius_earth
+                .map(|v| format!("r={v:.2} R_earth"))
+                .unwrap_or_else(|| "r=?".to_string());
+            println!(
+                "  {:<16} {:<6} {:<10} {:<12} {:<14} {}",
+                label,
+                p.discovery_method.as_archive_str(),
+                period,
+                sma,
+                mass,
+                radius
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Pretty-print a `Source` as a short bracketed label for the describe
+/// output. Keeps `[Observed - {reference} ({date})]` compact so the table
+/// stays readable.
+fn format_source(source: &ymir_core::Source) -> String {
+    use ymir_core::Source;
+    match source {
+        Source::Observed {
+            reference, date, ..
+        } => {
+            if date.is_empty() {
+                format!("[Observed - {reference}]")
+            } else {
+                format!("[Observed - {reference} ({date})]")
+            }
+        }
+        Source::Derived { from_stage } => format!("[Derived from {from_stage}]"),
+        Source::Assumed { reason } => format!("[Assumed - {reason}]"),
+    }
+}
+
+/// Parse `"Gaia DR3 {id}"` into the numeric source ID. Returns `None` for
+/// synthesized catalog IDs like "Sol".
+fn extract_gaia_id(catalog_id: &str) -> Option<u64> {
+    catalog_id
+        .strip_prefix("Gaia DR3 ")
+        .and_then(|s| s.trim().parse::<u64>().ok())
 }
 
 #[cfg(test)]
@@ -1327,6 +2135,115 @@ mod tests {
         assert!(err.contains("out of range"), "unexpected error: {err}");
     }
 
+    // --- Provenance tests ---------------------------------------------------
+
+    /// Generate an Earth world and verify that `provenance.json` is written
+    /// with the expected stage tree. Earth uses `sol_context()` which tags
+    /// catalog scalars as `Assumed` (from_params path) and HZ bounds as
+    /// `Derived`. The Earth body is hand-filled with `Observed` tags.
+    #[test]
+    fn generate_earth_writes_provenance_json() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let out = tmp.path().join("earth_prov");
+        let mut a = args(1, out.clone(), 0);
+        a.star = "Earth".to_string();
+        run_generate(&a).expect("generate earth ok");
+
+        let wd = WorldDirectory { root: out };
+        let prov_path = wd.provenance_path();
+        assert!(prov_path.exists(), "provenance.json should exist");
+
+        let report = load_provenance(&prov_path).expect("parse provenance.json");
+
+        // All expected stages must be present (climate + biome too: Earth runs full pipeline).
+        for stage in [
+            "stellar",
+            "orbital_body",
+            "atmosphere",
+            "skeleton",
+            "climate",
+            "biome",
+        ] {
+            assert!(report.stages.contains_key(stage), "missing stage: {stage}");
+        }
+
+        // Sol stellar context uses from_params → catalog scalars are Assumed,
+        // HZ bounds are Derived. No Observed tags expected here.
+        let stellar = &report.stages["stellar"];
+        assert!(
+            stellar.counts.assumed > 0,
+            "Sol stellar stage should have some Assumed fields (from_params path)"
+        );
+        assert!(
+            stellar.counts.derived > 0,
+            "Sol stellar stage should have some Derived fields (HZ bounds)"
+        );
+        // Total fields must be non-zero.
+        assert!(stellar.counts.total() > 0);
+
+        // For Earth (fixed body with `obs()` constructor), all numeric fields
+        // are Observed (e.g., mass, radius, semi_major_axis ...).
+        let body = &report.stages["orbital_body"];
+        assert!(
+            body.counts.observed > 0,
+            "orbital_body stage should have Observed fields for Earth"
+        );
+        assert_eq!(
+            body.counts.assumed, 0,
+            "Earth orbital_body should have zero Assumed fields"
+        );
+
+        // The skeleton aggregate node must have exactly 1 derived count.
+        let skeleton = &report.stages["skeleton"];
+        assert_eq!(skeleton.counts.derived, 1);
+        assert_eq!(skeleton.counts.observed, 0);
+        assert_eq!(skeleton.counts.assumed, 0);
+    }
+
+    /// For Tau Ceti the AtmosphereModel is fully derived from simulation;
+    /// assert that the atmosphere stage has zero Observed fields.
+    #[test]
+    fn generate_tau_ceti_atmosphere_is_all_derived() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let out = tmp.path().join("tau_ceti_prov");
+        run_generate(&args(42, out.clone(), 0)).expect("generate tau ceti ok");
+
+        let wd = WorldDirectory { root: out };
+        let report = load_provenance(&wd.provenance_path()).expect("parse provenance.json");
+
+        let atmo = &report.stages["atmosphere"];
+        assert_eq!(
+            atmo.counts.observed, 0,
+            "Tau Ceti atmosphere should have zero Observed fields"
+        );
+        // Must be all Derived (none Assumed either, since AtmosphereModel::derive always uses Derived).
+        assert!(
+            atmo.counts.derived > 0,
+            "Tau Ceti atmosphere should have some Derived fields"
+        );
+        assert_eq!(atmo.counts.assumed, 0);
+
+        // Climate and biome stages should be present for a full generate.
+        assert!(report.stages.contains_key("climate"));
+        assert!(report.stages.contains_key("biome"));
+    }
+
+    /// The `run_provenance` helper should succeed for a world with a report
+    /// and return the correct counts in summary mode.
+    #[test]
+    fn run_provenance_reads_existing_report() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let out = tmp.path().join("prov_world");
+        let mut a = args(1, out.clone(), 0);
+        a.star = "Earth".to_string();
+        run_generate(&a).expect("generate earth");
+
+        // Summary mode should succeed without error.
+        run_provenance(&out, false).expect("provenance summary");
+        // Full mode should also succeed.
+        run_provenance(&out, true).expect("provenance full");
+    }
+
     // --- Regenerate helpers -------------------------------------------------
 
     #[test]
@@ -1436,5 +2353,188 @@ mod tests {
                 b: "hi".to_string()
             }
         );
+    }
+
+    /// Build a minimal skeleton/climate/biomes bundle for Earth at
+    /// subdivision 2 and produce a [`RegionalDetail`] for tile 0.
+    fn sample_regional_detail(seed: u64) -> RegionalDetail {
+        use ymir_biome::BiomeMapConfig;
+        use ymir_climate::ClimateConfig;
+        use ymir_detail::{RegionSpec, RegionalDetailConfig};
+
+        let body = earth_body();
+        let star_ctx = sol_context();
+        let atmosphere = AtmosphereModel::derive(&body, &star_ctx, true);
+        let world = SkeletonWorld::build(body, atmosphere, 2, seed);
+        let climate = ClimateMap::build(&world, &ClimateConfig::default());
+        let biomes = BiomeMap::build(&world, &climate, &BiomeMapConfig::default());
+        let spec = RegionSpec::new(0, 1);
+        RegionalDetail::build(
+            &world,
+            &climate,
+            &biomes,
+            spec,
+            RegionalDetailConfig {
+                seed,
+                ..RegionalDetailConfig::default()
+            },
+        )
+    }
+
+    #[test]
+    fn save_then_load_round_trips_region() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wd = WorldDirectory::create(tmp.path().join("w").as_path()).expect("create");
+        let mut manifest = WorldManifest {
+            version: "1.0".to_string(),
+            pipeline_version: "0.1.0".to_string(),
+            star_name: "Sol".to_string(),
+            star_catalog_id: None,
+            planet_index: 0,
+            planet_name: Some("Earth".to_string()),
+            seed: 1,
+            created_at: "2026-04-12T00:00:00Z".to_string(),
+            overrides_file: None,
+            stages_computed: vec!["stellar".to_string()],
+            config: GenerationConfig::default(),
+            regions_generated: Vec::new(),
+        };
+
+        let region = sample_regional_detail(1);
+        let path = save_region(&wd, &mut manifest, &region).expect("save region");
+        assert!(path.is_file(), "region file should exist at {path:?}");
+        assert_eq!(manifest.regions_generated, vec![region.spec.tile_index]);
+
+        let loaded = load_region(&wd, region.spec.tile_index).expect("load region");
+
+        // Byte-identical after bincode round-trip.
+        let original_bytes = bincode::serialize(&region).expect("serialize original");
+        let loaded_bytes = bincode::serialize(&loaded).expect("serialize loaded");
+        assert_eq!(
+            original_bytes, loaded_bytes,
+            "RegionalDetail round-trip should be byte-identical"
+        );
+    }
+
+    #[test]
+    fn save_region_marks_manifest_idempotently() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wd = WorldDirectory::create(tmp.path().join("w").as_path()).expect("create");
+        let mut manifest = WorldManifest {
+            version: "1.0".to_string(),
+            pipeline_version: "0.1.0".to_string(),
+            star_name: "Sol".to_string(),
+            star_catalog_id: None,
+            planet_index: 0,
+            planet_name: Some("Earth".to_string()),
+            seed: 1,
+            created_at: "2026-04-12T00:00:00Z".to_string(),
+            overrides_file: None,
+            stages_computed: vec!["stellar".to_string()],
+            config: GenerationConfig::default(),
+            regions_generated: Vec::new(),
+        };
+
+        let region = sample_regional_detail(1);
+        save_region(&wd, &mut manifest, &region).expect("save 1");
+        save_region(&wd, &mut manifest, &region).expect("save 2");
+        assert_eq!(
+            manifest.regions_generated,
+            vec![region.spec.tile_index],
+            "repeated saves must not duplicate the tracked tile index"
+        );
+        assert!(manifest.has_region(region.spec.tile_index));
+    }
+
+    // --- Detail subcommand --------------------------------------------------
+
+    /// Build a minimal Earth world at subdivision 2 on disk, return its
+    /// directory. Shared across detail subcommand tests.
+    fn earth_world_for_detail(tmp: &std::path::Path, seed: u64) -> PathBuf {
+        let out = tmp.join("earth");
+        let mut a = args(seed, out.clone(), 0);
+        a.star = "Earth".to_string();
+        run_generate(&a).expect("generate earth");
+        out
+    }
+
+    #[test]
+    fn detail_subcommand_succeeds_on_earth_world() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let world = earth_world_for_detail(tmp.path(), 1);
+
+        run_detail(&DetailArgs {
+            world: world.clone(),
+            region: 0,
+            radius: 1,
+            output_image: None,
+            seed: None,
+        })
+        .expect("run_detail ok");
+
+        let region_file = world.join("detail").join("region_0000.bin");
+        assert!(
+            region_file.is_file(),
+            "expected region .bin at {region_file:?}"
+        );
+
+        let wd = WorldDirectory { root: world };
+        let manifest = wd.load_manifest().expect("load manifest");
+        assert_eq!(manifest.regions_generated, vec![0]);
+    }
+
+    #[test]
+    fn detail_subcommand_is_idempotent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let world = earth_world_for_detail(tmp.path(), 1);
+
+        let detail_args = DetailArgs {
+            world: world.clone(),
+            region: 0,
+            radius: 1,
+            output_image: None,
+            seed: None,
+        };
+
+        run_detail(&detail_args).expect("first run");
+        let region_file = world.join("detail").join("region_0000.bin");
+        let bytes_a = std::fs::read(&region_file).expect("read a");
+
+        run_detail(&detail_args).expect("second run");
+        let bytes_b = std::fs::read(&region_file).expect("read b");
+
+        assert_eq!(
+            bytes_a, bytes_b,
+            "back-to-back `ymir detail` calls must write byte-identical region files"
+        );
+
+        let wd = WorldDirectory { root: world };
+        let manifest = wd.load_manifest().expect("load manifest");
+        assert_eq!(
+            manifest.regions_generated,
+            vec![0],
+            "manifest must record the region exactly once"
+        );
+    }
+
+    #[test]
+    fn detail_with_output_image_writes_png() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let world = earth_world_for_detail(tmp.path(), 1);
+        let png_path = tmp.path().join("region0.png");
+
+        run_detail(&DetailArgs {
+            world: world.clone(),
+            region: 0,
+            radius: 1,
+            output_image: Some(png_path.clone()),
+            seed: None,
+        })
+        .expect("run_detail ok");
+
+        assert!(png_path.is_file(), "PNG should exist at {png_path:?}");
+        let decoded = image::open(&png_path).expect("decodes as a valid image");
+        assert!(decoded.width() > 0);
+        assert!(decoded.height() > 0);
     }
 }

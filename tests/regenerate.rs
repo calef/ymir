@@ -161,9 +161,9 @@ fn regenerate_atmosphere_override_updates_manifest_and_artifacts() {
     // Load skeleton and confirm the overridden surface_pressure was applied.
     let skeleton: ymir_surface::skeleton::SkeletonWorld =
         ymir_storage::load_bin(world_dir.join("skeleton.bin")).expect("load skeleton");
+    let sp = *skeleton.atmosphere.surface_pressure.inner();
     assert!(
-        (skeleton.atmosphere.surface_pressure - 0.5).abs() < 1e-9,
-        "atmosphere surface_pressure should reflect override (0.5), got {}",
-        skeleton.atmosphere.surface_pressure
+        (sp - 0.5).abs() < 1e-9,
+        "atmosphere surface_pressure should reflect override (0.5), got {sp}"
     );
 }
