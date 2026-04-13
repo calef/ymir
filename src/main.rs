@@ -19,6 +19,7 @@ use ymir_core::{
 use ymir_detail::{RegionSpec, RegionalDetail, RegionalDetailConfig};
 use ymir_render::biome_mollweide::{BiomeRenderConfig, render_biome_mollweide};
 use ymir_render::globe_renderer::{GlobeRenderConfig, render_skeleton_mollweide_to_path};
+use ymir_render::overlays::{BIOME_OFF_MAP_BG, render_confidence_from_report};
 use ymir_render::regional::{RegionalRenderConfig, render_regional_detail};
 use ymir_storage::manifest::{GenerationConfig, WorldManifest};
 use ymir_storage::world_io::WorldDirectory;
@@ -196,6 +197,36 @@ enum Commands {
     Override {
         #[command(subcommand)]
         action: OverrideAction,
+    },
+    /// Re-render a generated world's preview images without re-running the
+    /// pipeline.
+    ///
+    /// Reads the biome and skeleton artifacts from the world directory and
+    /// writes one or more PNG previews. Useful for regenerating the confidence
+    /// overlay after changing overrides, or for producing a higher-resolution
+    /// PNG without re-simulating the world.
+    ///
+    /// Available modes: `biome`, `elevation`, `confidence`.
+    Render {
+        /// Path to the world directory (must contain `manifest.json`,
+        /// `skeleton.bin`, `biomes.bin`, and `provenance.json`).
+        #[arg(long)]
+        world: PathBuf,
+        /// Render mode: `biome` (default), `elevation`, or `confidence`.
+        ///
+        /// `confidence` desaturates each pixel proportionally to how much
+        /// of the body's upstream data is observationally grounded.
+        #[arg(long, default_value = "biome")]
+        mode: String,
+        /// Output PNG path. Defaults to `<world>/preview_<mode>.png`.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Output image width in pixels.
+        #[arg(long, default_value_t = 2048)]
+        width: u32,
+        /// Output image height in pixels.
+        #[arg(long, default_value_t = 1024)]
+        height: u32,
     },
 }
 
@@ -376,6 +407,19 @@ fn main() -> ExitCode {
             OverrideAction::List { world } => run_override_list(&world),
             OverrideAction::Validate { world, field } => run_override_validate(&world, &field),
         },
+        Commands::Render {
+            world,
+            mode,
+            output,
+            width,
+            height,
+        } => run_render(&RenderArgs {
+            world,
+            mode,
+            output,
+            width,
+            height,
+        }),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -741,6 +785,164 @@ fn render_biome_preview(
     })
 }
 
+/// Render the confidence overlay preview PNG.
+///
+/// Composites the confidence desaturation wash onto a freshly-rendered biome
+/// base image and writes `preview_confidence.png` to the world directory.
+///
+/// The confidence level is derived from `report` (body-level provenance from
+/// the stellar, orbital_body, and atmosphere stages). In Phase 1 this is a
+/// uniform body-level wash; per-tile gradients are deferred to Phase 2.
+fn render_confidence_preview(
+    wd: &WorldDirectory,
+    skeleton: &SkeletonWorld,
+    biomes: &BiomeMap,
+    report: &ProvenanceReport,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    let biome_cfg = BiomeRenderConfig { width, height };
+    let base = render_biome_mollweide(skeleton, biomes, &biome_cfg);
+    let confidence_img = render_confidence_from_report(&base, report, BIOME_OFF_MAP_BG);
+    let out_path = wd.root.join("preview_confidence.png");
+    confidence_img.save(&out_path).map_err(|e| {
+        format!(
+            "failed to write confidence preview {}: {}",
+            out_path.display(),
+            e
+        )
+    })
+}
+
+/// Resolved arguments for the `render` subcommand.
+struct RenderArgs {
+    world: PathBuf,
+    mode: String,
+    output: Option<PathBuf>,
+    width: u32,
+    height: u32,
+}
+
+/// Re-render a world's preview PNG without re-running the pipeline.
+///
+/// Reads existing artifacts from the world directory and writes a PNG.
+/// Mode `biome` → `preview_biome.png`, `elevation` → `preview.png`,
+/// `confidence` → `preview_confidence.png` (or the path given by `--output`).
+fn run_render(args: &RenderArgs) -> Result<(), String> {
+    let wd = WorldDirectory {
+        root: args.world.clone(),
+    };
+    if !wd.manifest_path().exists() {
+        return Err(format!(
+            "manifest.json not found in {} (is this a ymir world directory?)",
+            args.world.display()
+        ));
+    }
+
+    let mode = args.mode.as_str();
+    match mode {
+        "elevation" => {
+            if !wd.skeleton_path().exists() {
+                return Err(format!(
+                    "skeleton.bin missing from {} (run `ymir generate` first)",
+                    args.world.display()
+                ));
+            }
+            let skeleton = load_skeleton(&wd)?;
+            let out = args
+                .output
+                .clone()
+                .unwrap_or_else(|| wd.root.join("preview.png"));
+            let cfg = GlobeRenderConfig {
+                width: args.width,
+                height: args.height,
+                background: [0, 0, 0],
+            };
+            render_skeleton_mollweide_to_path(&skeleton, &cfg, &out)
+                .map_err(|e| format!("failed to write {}: {}", out.display(), e))?;
+            println!("Wrote elevation preview: {}", out.display());
+        }
+        "biome" => {
+            if !wd.skeleton_path().exists() {
+                return Err(format!(
+                    "skeleton.bin missing from {} (run `ymir generate` first)",
+                    args.world.display()
+                ));
+            }
+            if !wd.biomes_path().exists() {
+                return Err(format!(
+                    "biomes.bin missing from {} (world was generated with --skip-biomes)",
+                    args.world.display()
+                ));
+            }
+            let skeleton = load_skeleton(&wd)?;
+            let biomes = load_biomes(&wd)?;
+            let out = args
+                .output
+                .clone()
+                .unwrap_or_else(|| wd.root.join("preview_biome.png"));
+            let cfg = BiomeRenderConfig {
+                width: args.width,
+                height: args.height,
+            };
+            let img = render_biome_mollweide(&skeleton, &biomes, &cfg);
+            img.save(&out)
+                .map_err(|e| format!("failed to write {}: {}", out.display(), e))?;
+            println!("Wrote biome preview: {}", out.display());
+        }
+        "confidence" => {
+            if !wd.skeleton_path().exists() {
+                return Err(format!(
+                    "skeleton.bin missing from {} (run `ymir generate` first)",
+                    args.world.display()
+                ));
+            }
+            if !wd.biomes_path().exists() {
+                return Err(format!(
+                    "biomes.bin missing from {} (world was generated with --skip-biomes)",
+                    args.world.display()
+                ));
+            }
+            if !wd.provenance_path().exists() {
+                return Err(format!(
+                    "provenance.json missing from {} (run `ymir generate` first)",
+                    args.world.display()
+                ));
+            }
+            let skeleton = load_skeleton(&wd)?;
+            let biomes = load_biomes(&wd)?;
+            let report = load_provenance(&wd.provenance_path()).map_err(|e| {
+                format!(
+                    "failed to load provenance.json from {}: {}",
+                    args.world.display(),
+                    e
+                )
+            })?;
+            let out = args
+                .output
+                .clone()
+                .unwrap_or_else(|| wd.root.join("preview_confidence.png"));
+            let cfg = BiomeRenderConfig {
+                width: args.width,
+                height: args.height,
+            };
+            let base = render_biome_mollweide(&skeleton, &biomes, &cfg);
+            let confidence_img = render_confidence_from_report(&base, &report, BIOME_OFF_MAP_BG);
+            confidence_img
+                .save(&out)
+                .map_err(|e| format!("failed to write {}: {}", out.display(), e))?;
+            println!("Wrote confidence preview: {}", out.display());
+        }
+        other => {
+            return Err(format!(
+                "unknown render mode '{other}': expected 'biome', 'elevation', or 'confidence'"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 /// Run the full Phase 1 pipeline and persist the resulting world.
 fn run_generate(args: &GenerateArgs) -> Result<(), String> {
     let empty_overrides = StageOverrides::default();
@@ -848,6 +1050,24 @@ fn run_generate(args: &GenerateArgs) -> Result<(), String> {
         biomes.as_ref(),
     )?;
     save_world_provenance(&wd, &provenance)?;
+
+    // Render confidence overlay alongside the biome preview if biomes were
+    // computed. Uses body-level provenance (Phase 1 limitation: no per-tile
+    // confidence; a uniform wash is applied to every pixel).
+    if let Some(b) = biomes.as_ref() {
+        println!(
+            "[confidence] rendering confidence overlay ({}x{})...",
+            args.preview_width, args.preview_height
+        );
+        render_confidence_preview(
+            &wd,
+            &skeleton,
+            b,
+            &provenance,
+            args.preview_width,
+            args.preview_height,
+        )?;
+    }
 
     println!();
     print_summary(
@@ -1051,6 +1271,19 @@ fn run_regenerate(args: &RegenerateArgs) -> Result<(), String> {
         biomes.as_ref(),
     )?;
     save_world_provenance(&wd, &provenance)?;
+
+    // Re-render confidence overlay so it reflects updated provenance after
+    // overrides are applied.
+    if let Some(b) = biomes.as_ref() {
+        render_confidence_preview(
+            &wd,
+            &skeleton,
+            b,
+            &provenance,
+            args.preview_width,
+            args.preview_height,
+        )?;
+    }
 
     println!();
     println!(

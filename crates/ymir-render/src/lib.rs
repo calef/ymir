@@ -19,5 +19,10 @@ pub use color_maps::elevation_to_rgb;
 pub use globe_renderer::{
     GlobeRenderConfig, render_skeleton_mollweide, render_skeleton_mollweide_to_path,
 };
+pub use overlays::{
+    BIOME_OFF_MAP_BG, ConfidenceLevel, ELEVATION_OFF_MAP_BG, apply_confidence_overlay,
+    confidence_level_from_report, desaturate_pixel, render_confidence_from_report,
+    render_confidence_overlay, saturation_scale,
+};
 pub use projections::{MapProjection, Mollweide};
 pub use regional::{RegionProjection, RegionalRenderConfig, render_regional_detail};

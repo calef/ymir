@@ -1020,13 +1020,15 @@ Debrief (2026-04-12): Landed `ymir override` with four subcommands: `add`, `remo
 
 ### REND-04: Confidence overlay
 - **Crate:** ymir-render
-- **Status:** ready
+- **Status:** done
 - **Depends on:** CORE-06, REND-02
 - **Blocked:** no
 - **Model:** sonnet
-- **Assignee:**
+- **Assignee:** agent
 
 Render-mode toggle that desaturates tiles whose biome is `Derived` or `Assumed` and leaves `Observed`-driven tiles at full saturation (design doc §4.1 "Confidence visualization"). "Observed-driven" means at least one upstream Sourced field contributing to the tile's biome is `Source::Observed`. Implement as a post-process on the biome-colored Mollweide output. Expose via `--render-mode confidence` in `ymir generate` / new `ymir render` subcommand. Tests: Earth with full observational overrides renders uniformly saturated; Earth with zero overrides renders uniformly desaturated; partial overrides produce a mix.
+
+**Debrief (2026-04-12):** Implemented `overlays.rs` in `ymir-render` with `ConfidenceLevel` (`FullyDerived | Mixed | FullyObserved`), `confidence_level_from_report` (examines stellar/orbital_body/atmosphere per-field stages), `desaturate_pixel` (BT.709 luma-weighted), and `apply_confidence_overlay` / `render_confidence_from_report` (uniform body-level wash applied as a post-process on top of an existing biome image). Saturation scales: 1.0 for FullyObserved, 0.55 for Mixed, 0.15 for FullyDerived. The generate pipeline now writes `preview_confidence.png` automatically after biomes are computed, and `ymir regenerate` re-renders it after applying overrides. A new `ymir render --world PATH --mode confidence|biome|elevation` subcommand allows post-hoc rendering without re-running the pipeline. **Phase 1 limitation:** The overlay is a uniform body-level wash (not per-tile); the skeleton/climate/biome stages carry only a single aggregate `Derived` tag for the entire grid, so per-tile confidence gradients are not possible until those stages emit per-tile provenance (Phase 2+). 19 new unit tests covering all branches of the confidence derivation, desaturation math, overlay compositing, and base-image immutability.
 
 ### REND-05: Per-stage render modes
 - **Crate:** ymir-render + ymir (binary)
