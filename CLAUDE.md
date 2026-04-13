@@ -27,9 +27,20 @@ All work is tracked in `TASKS.md` at the repo root. Read it before starting work
 
 1. Check `TASKS.md` for tasks with **Status: ready**.
 2. Set the task to `in-progress` before starting work.
-3. Implement, test, ensure `cargo check`, `cargo test`, and `cargo clippy -- -D warnings` pass for the affected crate.
-4. Set the task to `done` when complete.
+3. Implement, test, ensure `cargo check`, `cargo test`, and `cargo clippy -- -D warnings` pass for the affected crate. Also confirm `cargo doc --no-deps` is warning-free for any crate you touched.
+4. Set the task to `done` in TASKS.md and write the debrief paragraph beneath the block.
 5. Check if any `pending` tasks now have all dependencies `done`; if so, update them to `ready`.
+6. **Commit the task as a single self-contained commit** before handing back to the orchestrator. This is mandatory — do not leave the tree dirty. Scope the commit to the task's files plus the TASKS.md edits (task block + cascade flips). Message format:
+
+   ```
+   <TASK-ID>: <one-line summary>
+
+   <2-4 line summary of what landed, what shipped as tests, any gotchas>
+
+   Co-Authored-By: Claude <noreply@anthropic.com>
+   ```
+
+   Stage files explicitly (`git add path/to/file ...`) rather than `git add -A` so unrelated debris doesn't ride along. If a pre-commit hook fails, fix the underlying issue and create a new commit — do **not** `--amend` or `--no-verify`.
 
 ### Blocking a task
 
@@ -70,7 +81,7 @@ ymir-storage    → core
 
 ## Design Reference
 
-The authoritative design document is `ymir-design.md` at the repo root. Refer to it for stage specifications, struct definitions, algorithms, and open questions.
+The authoritative design document is `ARCHITECTURE.md` at the repo root. Refer to it for stage specifications, struct definitions, algorithms, and open questions.
 
 ## Phase 1 Scope
 
