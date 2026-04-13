@@ -634,7 +634,7 @@ NOTE: Repo created as `calef/ymir` (public) via `gh repo create`. Secret sweep c
 
 ### INFRA-09: Adopt release-plz for automated versioning and CHANGELOG
 - **Crate:** repo root
-- **Status:** ready
+- **Status:** in-progress
 - **Depends on:** INFRA-08, INFRA-11
 - **Blocked:** no
 - **Model:** sonnet
@@ -704,6 +704,48 @@ Steps:
 Gotchas: the PR title also matters if you squash-merge, because the squash commit uses the PR title as its message. release-plz reads squash-commit messages, so PR titles must follow the convention too. Update the PR template (if one exists) to say so, or add a line to CONTRIBUTING.md.
 
 Updated CLAUDE.md commit-format block with the new `<type>(<scope>): <TASK-ID> - <summary>` template, including the full allowed-types list, scope table, example, and breaking-change `!` convention. Added `.gitmessage` as an opt-in commit template and `commitlint.config.js` with the 9-type allow list and a subject-pattern rule enforcing the `TASK-ID - ` prefix. Wired the advisory `commitlint` job in `.github/workflows/commitlint.yml` (PR-only, not added to branch protection). Added a note to CONTRIBUTING.md's Pull Requests section clarifying that PR titles must follow the convention because squash-merge uses them as commit messages. INFRA-09 remains `pending` until INFRA-08 also lands.
+
+### INFRA-12: URGENT - fix CI cargo-deny failures blocking Dependabot
+- **Crate:** repo root
+- **Status:** ready
+- **Depends on:** (none)
+- **Blocked:** no
+- **Model:** sonnet
+- **Priority:** URGENT — blocks all PR merges including Dependabot updates
+
+Every CI run on `main` and every Dependabot PR is failing at the `cargo deny` step. This stops dep updates from landing, which is exactly the automation INFRA-06/07 were meant to enable. Fix promptly.
+
+Observed failures (CI run 24348131076 on latest Dependabot PR; same five issues on main):
+
+**License rejections** (`cargo deny check licenses`):
+1. Some crate ships `(MIT OR Apache-2.0) AND NCSA` — NCSA is not in `deny.toml`'s allow list. NCSA (University of Illinois/NCSA Open Source License) is a permissive BSD-family license; the right fix is to add it to `licenses.allow`.
+2. Some crate ships `Apache-2.0 WITH LLVM-exception` — cargo-deny's SPDX `WITH` handling needs explicit allowance. The LLVM exception is standard on LLVM-derived code (likely pulled in via a wgpu / glow / compiler-internals transitively). Add an `exceptions` entry in `deny.toml` or allow the specific combined expression.
+
+**Advisory rejections** (`cargo deny check advisories`):
+3. `Bincode is unmaintained` (RUSTSEC `unmaintained`). We use bincode 1.3.3 in ymir-storage. Two paths: (a) upgrade to bincode 2.x, which is a breaking API change and will require updating ymir-storage's encode/decode calls AND migrating any existing world snapshots (different on-disk format); (b) ignore the advisory in `deny.toml` with a justification and expiration date (e.g., "revisit 2026-10-01"). Prefer (a) if scope allows, (b) if not.
+4. `paste - no longer maintained` (RUSTSEC `unmaintained`). Likely pulled transitively (common deps of egui/wgpu use paste). Run `cargo tree -p paste --invert` to find the source. Upgrade the upstream crate or add the advisory to the ignore list.
+5. `Rand is unsound with a custom logger using rand::rng()` (RUSTSEC `unsound`). Ymir seeds everything through rand_pcg — we do not call `rand::rng()` — so we are not affected. Add to ignore list with a comment explaining that ymir seeds via rand_pcg, not thread-local rng.
+
+**Non-fatal warnings** (worth addressing in the same pass):
+- `found 2 duplicate entries for crate 'getrandom'` and `'hashbrown'`. Run `cargo tree -d` to find the duplicators and resolve with `cargo update` or dep-resolver configuration.
+- The cargo-deny docker action logs `override toolchain '1.88-x86_64-unknown-linux-musl' is not installed`. Advisory only (cargo-deny still runs), but suggests INFRA-05's rust-toolchain.toml may want the musl target added or the cargo-deny-action may need a pre-step to install the toolchain. Low priority.
+
+Steps:
+
+1. Reproduce locally. `cargo install cargo-deny` if missing, then `cargo deny check licenses 2>&1 | head -100` and `cargo deny check advisories 2>&1 | head -100`. The local output will name the offending crates (the Docker action elides this).
+2. For license #1: add `NCSA` to `deny.toml` `licenses.allow`. Confirm which crate triggered it.
+3. For license #2: add the Apache-2.0 WITH LLVM-exception handling. In cargo-deny's deny.toml v2 schema, use `exceptions = [{ name = "<crate>", allow = ["LLVM-exception"] }]`. Identify the crate first.
+4. For advisory #3 (bincode): evaluate bincode 2.x migration scope — grep ymir-storage for `bincode::` and `serialize` / `deserialize` calls. If the migration is < 50 lines and doesn't break existing world snapshots (or we accept re-generating them), do it. Otherwise add to ignore list with a 6-month expiration.
+5. For advisory #4 (paste): `cargo tree -p paste --invert` to find the source. Probably egui or wgpu transitively. Bump the upstream dep if a newer version exists that drops paste; otherwise ignore.
+6. For advisory #5 (rand): add to ignore list with justification comment.
+7. Address the duplicate-entry warnings via `cargo update`.
+8. Re-run `cargo deny check` locally, confirm pass.
+9. Commit, push, confirm CI green on main. Re-trigger the failing Dependabot workflows via `gh workflow run ci.yml` or by commenting `@dependabot rebase` on each open PR.
+
+Gotchas:
+- Dependabot PRs also fail the `commitlint` advisory job because Dependabot's message format is `deps(cargo):(deps): bump X from Y to Z` — the nested `(deps)` group is an artifact of the cargo-deny-action's group naming and does not match INFRA-11's subject-pattern. Track that separately as INFRA-13 if commitlint is blocking merges even after cargo-deny is green. (It is advisory per INFRA-11, but Dependabot showing persistent red checks is noisy.)
+- If adding any RUSTSEC ID to `advisories.ignore`, include a `# expires: YYYY-MM-DD` comment so it gets revisited rather than becoming permanent tech debt.
+- After this lands, audit whether INFRA-02's CI workflow should pre-install `cargo-deny` and run `cargo deny check` locally as a fast pre-check before hitting the docker action (optional, nice-to-have).
 
 ---
 
@@ -1056,11 +1098,11 @@ New crate `crates/ymir-gui` using `egui` (via `eframe`) for the desktop UI. Just
 
 ### GUI-02: Star browser panel
 - **Crate:** ymir-gui
-- **Status:** ready
+- **Status:** in-progress
 - **Depends on:** GUI-01, CAT-09
 - **Blocked:** no
 - **Model:** sonnet
-- **Assignee:**
+- **Assignee:** agent
 
 Left sidebar: searchable table over the `Catalog` facade. Columns: name (or Gaia ID), spectral type, distance (pc), T_eff, known planets. Filters: spectral-type multi-select, distance slider, "has confirmed planets" checkbox. Row click selects the star; selected StarContext surfaces in the inspector. Virtualize the table (only render visible rows) so 500k rows perform well. Tests: unit tests for the filter-predicate logic; manual verification for scroll performance.
 
