@@ -1040,7 +1040,7 @@ Unify the Mollweide outputs (`preview.png`, `preview_biome.png`) behind a single
 
 ### GUI-01: Scaffold `ymir-gui` crate
 - **Crate:** ymir-gui (new)
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** CAT-08, CORE-07
 - **Blocked:** no
 - **Model:** opus
@@ -1048,9 +1048,11 @@ Unify the Mollweide outputs (`preview.png`, `preview_biome.png`) behind a single
 
 New crate `crates/ymir-gui` using `egui` (via `eframe`) for the desktop UI. Justification: small dep footprint, runs natively and in wasm, good at data-heavy panels, easy to embed PNG previews. Alternative `iced` rejected for Phase 4 because its layout model is heavier for data-first UIs. Establish the app skeleton: main window, top menu bar (File → Open World, View → Render Mode, Help), blank central area with a left sidebar (future star browser) and right inspector panel. No interactivity beyond opening a pre-generated world directory. Tests: `cargo check` compiles; headless `cargo test` runs an app-startup smoke test if egui supports one (`egui_kittest` or similar — skip if heavyweight).
 
+**Debrief (2026-04-12):** Framework is `eframe` + `egui` pinned at `=0.33.3` (0.34+ requires rustc 1.92, workspace is on 1.88). Backend is `glow`; swap to `wgpu` when GUI-04 needs it. Public extensibility surface: `Panel` trait (region + title + `ui(&mut egui::Ui)`), `PanelRegion` enum (`LeftSidebar | Central | Inspector`), `ViewMode` enum (`Empty | System | Globe | Detail`), `RenderMode` enum (`Elevation | Biome | Temperature | Moisture | Confidence | Plates` with `::all()` for menu generation), `InspectorTab` enum (`Fields | Provenance | Override`). State lives in `AppState` (serde-persistent: view/render selection, confidence-overlay toggle, last world path) and `YmirApp` (non-persistent handles: `LoadedWorld`, `InspectorPanel`). GUI-02..08 should extend those enums and add new `Panel` impls, not add parallel booleans. `WorldLoadError` uses hand-rolled `Display`/`Error` impls to avoid pulling `thiserror` at this layer. 13 unit tests cover enum defaults, panel trait object-safety, `AppState` serde round-trip, and world-loader error paths. Added `gui` to commitlint / .gitmessage scope list so `feat(gui):` is valid.
+
 ### GUI-02: Star browser panel
 - **Crate:** ymir-gui
-- **Status:** pending
+- **Status:** ready
 - **Depends on:** GUI-01, CAT-09
 - **Blocked:** no
 - **Model:** sonnet

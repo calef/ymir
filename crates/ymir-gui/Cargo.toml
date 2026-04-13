@@ -1,0 +1,50 @@
+[package]
+name = "ymir-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Desktop GUI for browsing Ymir-generated worlds (egui/eframe)"
+documentation = "https://docs.rs/ymir-gui"
+keywords = ["simulation", "worldgen", "gui", "egui"]
+categories = ["gui", "simulation"]
+# Viewer binary is end-user tooling, not a reusable library.
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# egui + eframe power the desktop window and widgets. `persistence` stores
+# window size / last opened world between launches. The `glow` backend keeps
+# the initial Phase-4 footprint small; a wgpu backend can be added later when
+# GUI-04 needs it for the 3D globe view.
+eframe = { version = "=0.33.3", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "persistence",
+    "wayland",
+    "x11",
+] }
+egui = { version = "=0.33.3", default-features = false }
+# Read-only producers: ymir-gui sits at the top of the dep graph and consumes
+# every other crate. It MUST NOT be depended on by any of them.
+ymir-core = { path = "../ymir-core", version = "0.1.0" }
+ymir-catalog = { path = "../ymir-catalog", version = "0.1.0" }
+ymir-system = { path = "../ymir-system", version = "0.1.0" }
+ymir-atmosphere = { path = "../ymir-atmosphere", version = "0.1.0" }
+ymir-surface = { path = "../ymir-surface", version = "0.1.0" }
+ymir-climate = { path = "../ymir-climate", version = "0.1.0" }
+ymir-biome = { path = "../ymir-biome", version = "0.1.0" }
+ymir-detail = { path = "../ymir-detail", version = "0.1.0" }
+ymir-render = { path = "../ymir-render", version = "0.1.0" }
+ymir-storage = { path = "../ymir-storage", version = "0.1.0" }
+
+[dev-dependencies]
+serde_json = "1"
+
+[[bin]]
+name = "ymir-gui"
+path = "src/bin/ymir-gui.rs"

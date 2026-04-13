@@ -21,7 +21,7 @@
 #
 # ─── Scopes ───────────────────────────────────────────────────────────────────
 #   core | catalog | system | atmosphere | surface | climate | biome |
-#   detail | render | storage    (crate name without the ymir- prefix)
+#   detail | render | storage | gui    (crate name without the ymir- prefix)
 #   ymir        the binary crate at the repo root
 #   workspace   cross-cutting changes (multiple crates or repo-level config)
 #

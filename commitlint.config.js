@@ -28,6 +28,7 @@ module.exports = {
         'detail',
         'render',
         'storage',
+        'gui',
         'ymir',
         'workspace',
       ],
