@@ -634,7 +634,7 @@ NOTE: Repo created as `calef/ymir` (public) via `gh repo create`. Secret sweep c
 
 ### INFRA-09: Adopt release-plz for automated versioning and CHANGELOG
 - **Crate:** repo root
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** INFRA-08, INFRA-11
 - **Blocked:** no
 - **Model:** sonnet
@@ -653,9 +653,17 @@ Steps:
 
 Gotchas: `publish = false` is intentional. Re-visit when (a) the ymir-core trait boundaries are stable enough to commit to a public API, and (b) an external consumer actually wants a library dependency. Flipping `publish` on mid-0.x without preparing for semver breakage is how you end up with yanked crate versions. Also: release-plz needs conventional-commit prefixes to classify changes; INFRA-11 is the dependency that makes this work. If INFRA-11 isn't landed first, the changelog will be unstructured.
 
+Added `release-plz.toml` with `changelog_update = true`, `git_release_enable = true`, `publish = false`, and conventional-commit grouping (feat→Added, fix→Fixed, perf→Performance, refactor→Changed, docs→Documentation, test→Tests, build→Build, ci→CI, chore→skipped). Added `.github/workflows/release-plz.yml` triggered on push to main, using `release-plz/action@v0` with a PAT reference. Fixed TODO placeholder URLs in root `Cargo.toml` (`repository`/`homepage`) and in `CHANGELOG.md` to point at `github.com/calef/ymir`. All crate Cargo.tomls already used workspace inheritance — no crate-level changes needed. Steps 5 (PAT secret creation) and 6 (first push to trigger release PR) require human action; see handoff list below. `cargo check --workspace`, `cargo clippy`, and `cargo doc --no-deps` all pass clean. Note: `cargo fmt --check` has pre-existing failures in unstaged GUI-02 working-tree files (`crates/ymir-gui/`) that are unrelated to this task and not introduced by INFRA-09.
+
+Human handoff (ordered):
+1. Go to https://github.com/settings/personal-access-tokens and create a fine-grained PAT scoped to `calef/ymir` with **Contents: Read and write** and **Pull requests: Read and write**. Name it `RELEASE_PLZ_TOKEN`.
+2. Add the PAT as a repository secret: https://github.com/calef/ymir/settings/secrets/actions → New repository secret → name `RELEASE_PLZ_TOKEN`.
+3. Push this commit (and any pending commits) to `origin/main`. The release-plz workflow will trigger automatically and open a "Release PR" proposing `v0.1.0` with a populated CHANGELOG entry.
+4. Review and merge the Release PR. release-plz will push a `v0.1.0` tag and create a GitHub release automatically.
+
 ### INFRA-10: Ship prebuilt `ymir` binaries via cargo-dist
 - **Crate:** repo root
-- **Status:** pending
+- **Status:** ready
 - **Depends on:** INFRA-09
 - **Blocked:** no
 - **Model:** sonnet

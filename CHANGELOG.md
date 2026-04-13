@@ -57,6 +57,5 @@ skeleton/heightmap) and Phase 2 (climate, biomes, overrides, validation).
 This is a pre-release development baseline. APIs across all crates may change
 without deprecation cycles until the 1.0 release.
 
-<!-- TODO: update compare/tag URLs once the repo is pushed to a GitHub remote -->
-[Unreleased]: https://example.invalid/TODO-REPO-URL/compare/v0.1.0...HEAD
-[0.1.0]: https://example.invalid/TODO-REPO-URL/releases/tag/v0.1.0
+[Unreleased]: https://github.com/calef/ymir/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/calef/ymir/releases/tag/v0.1.0

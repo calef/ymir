@@ -1,0 +1,46 @@
+name: release-plz
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release-plz:
+    name: release-plz
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-plz
+    permissions:
+      # Needed to push commits (version bumps) and create/update the release PR.
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Use the PAT so that the release PR's CI checks are triggered.
+          # RELEASE_PLZ_TOKEN is a fine-grained PAT with:
+          #   - Contents: Read and write
+          #   - Pull requests: Read and write
+          # scoped to the calef/ymir repository.
+          #
+          # HUMAN HANDOFF: create this PAT and add it as a repository secret
+          # named RELEASE_PLZ_TOKEN before pushing to main. See TASKS.md
+          # INFRA-09 debrief for the exact steps.
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Run release-plz
+        uses: release-plz/action@v0
+        with:
+          # release-plz opens or updates a "Release PR" that bumps the
+          # workspace version and appends to CHANGELOG.md. Merging the PR
+          # creates the tag and GitHub release automatically.
+          command: release-plz
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

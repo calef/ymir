@@ -1,0 +1,68 @@
+# release-plz configuration
+# https://release-plz.dev/docs/config
+
+[workspace]
+# All crates share the workspace version (pre-1.0 shared versioning).
+# One bump covers everything.
+changelog_update = true
+git_release_enable = true
+# Do not publish to crates.io until the public API is stable.
+# Re-visit when ymir-core trait boundaries are stable and an external
+# consumer wants a library dependency.
+publish = false
+
+# Keep-a-changelog format with conventional-commit grouping.
+[changelog]
+header = """# Changelog
+
+All notable changes to Ymir will be documented in this file.
+
+The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Dates are [ISO-8601](https://en.wikipedia.org/wiki/ISO_8601) (YYYY-MM-DD).
+"""
+body = """
+{% if version %}\
+## [{{ version }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## [Unreleased]
+{% endif %}\
+
+{% for group, commits in commits | group_by(attribute="group") %}\
+### {{ group | upper_first }}
+{% for commit in commits %}\
+- {% if commit.scope %}**{{ commit.scope }}**: {% endif %}{{ commit.message }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/calef/ymir/commit/{{ commit.id }}))\
+{% endfor %}
+{% endfor %}\
+"""
+trim = true
+footer = """
+{% for release in releases %}\
+{% if loop.first %}\
+{% if release.version %}\
+[unreleased]: https://github.com/calef/ymir/compare/v{{ release.version }}...HEAD
+{% else %}\
+[unreleased]: https://github.com/calef/ymir/compare/
+{% endif %}\
+{% endif %}\
+{% if release.version %}\
+{% if release.previous.version %}\
+[{{ release.version }}]: https://github.com/calef/ymir/compare/v{{ release.previous.version }}...v{{ release.version }}
+{% else %}\
+[{{ release.version }}]: https://github.com/calef/ymir/releases/tag/v{{ release.version }}
+{% endif %}\
+{% endif %}\
+{% endfor %}"""
+
+# Map conventional-commit types to changelog section headings.
+commit_parsers = [
+  { message = "^feat", group = "Added" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^perf", group = "Performance" },
+  { message = "^refactor", group = "Changed" },
+  { message = "^docs", group = "Documentation" },
+  { message = "^test", group = "Tests" },
+  { message = "^build", group = "Build" },
+  { message = "^ci", group = "CI" },
+  { message = "^chore", skip = true },
+]

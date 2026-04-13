@@ -18,9 +18,8 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-# TODO (INFRA-04): replace `TODO` with the real GitHub org/user once the repo is pushed.
-repository = "https://github.com/TODO/ymir"
-homepage = "https://github.com/TODO/ymir"
+repository = "https://github.com/calef/ymir"
+homepage = "https://github.com/calef/ymir"
 readme = "README.md"
 rust-version = "1.88"
 authors = ["Christopher Alef and Ymir contributors"]
