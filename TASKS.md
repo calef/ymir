@@ -625,10 +625,81 @@ Steps:
 4. Create the remote: `gh repo create <owner>/<name> --<public|private> --source=. --remote=origin --description "Causal star-to-surface planet simulation in Rust"`. Do NOT use `--push` on the first create call — push main separately so any failure is easier to diagnose.
 5. `git push -u origin main` and then any additional branches that exist.
 6. Verify: (a) the INFRA-02 CI workflow triggers and either passes or surfaces a real failure (if it fails, open an issue documenting it; do not hotfix on first push); (b) Dependabot registers and queues its first run on the next Monday 06:00 America/Los_Angeles slot; (c) the `deny` CI job runs and passes.
-7. Repo hygiene on first landing: enable branch protection on `main` (require CI green, require PR review, disallow force-push). Add repository topics: `rust`, `simulation`, `procedural-generation`, `astronomy`, `planet-generation`. Set the default branch to `main`. These can be done via `gh` subcommands or the web UI; prefer `gh` so the sequence is replayable.
+7. Repo hygiene on first landing: enable branch protection on `main` (require CI green, require linear history, disallow force-push, disallow direct pushes). Allow rebase-merge and squash-merge, disallow merge commits (keeps `git log` readable given the per-task commit rule). Enable `gh`'s auto-merge feature repo-wide so PRs can queue behind CI. For solo work set "require 0 approvals" so you don't block yourself; flip to 1 when a second committer appears. Add repository topics: `rust`, `simulation`, `procedural-generation`, `astronomy`, `planet-generation`. Set the default branch to `main`. These can be done via `gh` subcommands or the web UI; prefer `gh` so the sequence is replayable.
 8. Update README with the canonical GitHub URL where relevant (clone command, CI badge link, issue-tracker reference). Include a CI badge if the workflow has a well-known name.
 
 Gotchas: this is the first operation that exposes the repo publicly. Re-run the secret sweep right before `git push`, not just at task start — the working tree changes as other tasks land. If the CI workflow fails on first push, do not bypass with `push --force`; diagnose the failure and open a follow-up task.
+
+### INFRA-09: Adopt release-plz for automated versioning and CHANGELOG
+- **Crate:** repo root
+- **Status:** pending
+- **Depends on:** INFRA-08, INFRA-11
+- **Blocked:** no
+- **Model:** sonnet
+- **Assignee:**
+
+Install `release-plz` so releases become "merge the release PR, get a tag." Pre-1.0 the workspace uses shared versioning (`workspace.package.version` in the root `Cargo.toml`, inherited by each crate), so one bump covers everything.
+
+Steps:
+
+1. Convert root `Cargo.toml` to workspace inheritance for `version`, `authors`, `license`, `repository`, `edition`, `rust-version`. Each crate's `Cargo.toml` uses `version.workspace = true` etc. Seed the workspace version at `0.1.0` since Phase 1 is shippable.
+2. Add `release-plz.toml` at repo root. Pin `changelog_update = true`, `git_release_enable = true`, `publish = false` (crates.io stays off until the API stabilizes — see gotcha). Configure the changelog to group by conventional-commit type.
+3. Add a `.github/workflows/release-plz.yml` triggered on push to `main`. Use the official `release-plz/action@v0` step. It opens or updates a single "Release PR" that bumps the workspace version and appends to CHANGELOG.md based on commits since the last tag. Merging that PR creates the tag and GitHub release.
+4. Seed `CHANGELOG.md` at repo root with the keep-a-changelog header and a `## [0.1.0]` section listing the Phase 1 deliverable (CLI produces Mollweide PNG for Tau Ceti). This gives release-plz a valid file to append to.
+5. Generate a `RELEASE_PLZ_TOKEN` (fine-grained PAT with contents: write + pull-requests: write scoped to this repo) and store as a repo secret. The default `GITHUB_TOKEN` cannot trigger downstream workflows (so CI won't run on the release PR), which is why the docs recommend a PAT.
+6. Trigger the first run by pushing a dummy conventional commit (`chore: bootstrap release-plz`) and confirm the release PR opens. Merge it to cut `v0.1.0` and verify the tag + GitHub release appear.
+
+Gotchas: `publish = false` is intentional. Re-visit when (a) the ymir-core trait boundaries are stable enough to commit to a public API, and (b) an external consumer actually wants a library dependency. Flipping `publish` on mid-0.x without preparing for semver breakage is how you end up with yanked crate versions. Also: release-plz needs conventional-commit prefixes to classify changes; INFRA-11 is the dependency that makes this work. If INFRA-11 isn't landed first, the changelog will be unstructured.
+
+### INFRA-10: Ship prebuilt `ymir` binaries via cargo-dist
+- **Crate:** repo root
+- **Status:** pending
+- **Depends on:** INFRA-09
+- **Blocked:** no
+- **Model:** sonnet
+- **Assignee:**
+
+Attach prebuilt `ymir` binaries to each GitHub release so users don't need a Rust toolchain to try the project. cargo-dist handles cross-compilation, artifact bundling, checksums, and uploading to the release that release-plz just created.
+
+Steps:
+
+1. Install `cargo-dist` locally (`cargo install cargo-dist`) and run `cargo dist init`. Answer the prompts: targets = `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`. Skip Windows initially (no CI coverage, reintroduce later if someone asks).
+2. `cargo dist init` writes `[workspace.metadata.dist]` to the root `Cargo.toml` and a `.github/workflows/release.yml` that triggers on tag push. Review and commit both. Confirm the generated workflow does not conflict with release-plz's workflow (they should chain: release-plz merges → tag pushed → cargo-dist runs).
+3. Configure cargo-dist to bundle the CLI README section and LICENSE into each archive (`include = ["README.md", "LICENSE"]` in the dist metadata). Use `.tar.xz` for Linux, `.tar.gz` for macOS.
+4. Verify an end-to-end run: make a trivial change, let release-plz propose `v0.1.1`, merge the release PR, confirm the tag-triggered workflow builds all four targets and attaches archives + `dist-manifest.json` to the GitHub release.
+5. Add a "Downloads" section to README pointing at the latest release page. Include the one-liner installer cargo-dist generates (`curl -LsSf https://github.com/<owner>/ymir/releases/latest/download/ymir-installer.sh | sh`) if `cargo dist init` set one up.
+
+Gotchas: aarch64-unknown-linux-gnu cross-compiles on x86_64 Linux runners via the standard `cross` toolchain; cargo-dist handles this but it roughly doubles workflow wall-time. If release duration becomes a problem, drop aarch64-linux first (lowest user demand for a planet-sim demo). macOS universal binaries (`universal2-apple-darwin`) are an option if you'd rather ship one darwin artifact instead of two; cargo-dist supports this natively.
+
+### INFRA-11: Adopt conventional-commits prefix in commit messages
+- **Crate:** repo root
+- **Status:** ready
+- **Depends on:** (none)
+- **Blocked:** no
+- **Model:** sonnet
+- **Assignee:**
+
+Prefix every commit with a conventional-commits type so release-plz can auto-classify changes into the CHANGELOG (features vs fixes vs docs vs chores). The existing per-task commit rule in CLAUDE.md stays; this just adds a type prefix in front of the task ID.
+
+Steps:
+
+1. Update CLAUDE.md "Commit the task" section. New format:
+
+   ```
+   <type>(<scope>): <TASK-ID> - <one-line summary>
+
+   <2-4 line body>
+
+   Co-Authored-By: Claude <noreply@anthropic.com>
+   ```
+
+   Allowed types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`. Scope is the crate name without the `ymir-` prefix (`core`, `catalog`, `system`, `atmosphere`, `surface`, `climate`, `biome`, `detail`, `render`, `storage`) or `ymir` for the binary or `workspace` for cross-cutting changes. Example: `feat(detail): REGN-06 - HexGrid subdivision`.
+2. Breaking changes get `!` before the colon: `feat(core)!: CORE-12 - rename Sourced trait`. release-plz uses this to bump the minor version pre-1.0 (or major post-1.0).
+3. Add a `.gitmessage` template at repo root documenting the format. Tell contributors to `git config commit.template .gitmessage` locally; don't enforce via a hook (too brittle).
+4. Optional but recommended: add a CI job `commitlint` that runs on PRs and fails if any commit in the PR diverges from the convention. Use `wagoid/commitlint-github-action@v6` with a `commitlint.config.js` allowing the types above. Keep it advisory (don't add it to branch protection required checks) until the convention beds in.
+5. Do NOT retrofit old commits. History stays as-is; the convention applies from this task forward.
+
+Gotchas: the PR title also matters if you squash-merge, because the squash commit uses the PR title as its message. release-plz reads squash-commit messages, so PR titles must follow the convention too. Update the PR template (if one exists) to say so, or add a line to CONTRIBUTING.md.
 
 ---
 
