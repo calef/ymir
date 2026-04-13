@@ -10,6 +10,7 @@ members = [
     "crates/ymir-detail",
     "crates/ymir-render",
     "crates/ymir-storage",
+    "crates/ymir-gui",
 ]
 resolver = "3"
 

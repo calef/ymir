@@ -188,6 +188,95 @@ enum Commands {
         #[arg(long, default_value_t = 512)]
         preview_height: u32,
     },
+    /// Authoring helpers for `overrides.json` — add, remove, list, and
+    /// validate per-field overrides without editing JSON by hand.
+    ///
+    /// After editing overrides with these commands, run `ymir regenerate
+    /// --world PATH --overrides <world>/overrides.json` to propagate them.
+    Override {
+        #[command(subcommand)]
+        action: OverrideAction,
+    },
+}
+
+/// Subcommands for `ymir override`.
+#[derive(Subcommand)]
+enum OverrideAction {
+    /// Set a per-field override in `<world>/overrides.json`.
+    ///
+    /// Creates the file if it does not exist. Field paths use dot notation
+    /// to address a specific `Sourced<T>` field within a pipeline stage,
+    /// e.g. `orbital_body.radius` or `atmosphere.surface_pressure`.
+    ///
+    /// Aggregate stages (skeleton, climate, biome) do not carry per-field
+    /// provenance and therefore cannot be targeted with this command; use
+    /// a JSON override file directly with `ymir regenerate --overrides` for
+    /// those.
+    Add {
+        /// Path to the world directory (must contain `manifest.json`).
+        #[arg(long)]
+        world: PathBuf,
+        /// Dot-separated field path, e.g. `orbital_body.radius`.
+        #[arg(long)]
+        field: String,
+        /// New value for the field (parsed as JSON; strings need quoting).
+        #[arg(long)]
+        value: String,
+        /// Optional unit annotation stored in the provenance comment
+        /// (e.g. `R_earth`). Stored as metadata only — the pipeline uses
+        /// the numeric value directly.
+        #[arg(long)]
+        unit: Option<String>,
+        /// Bibliographic reference for the observational value
+        /// (e.g. `"Gilbert+ 2023"`).
+        #[arg(long, default_value = "user override")]
+        reference: String,
+        /// Instrument or method used to obtain the value
+        /// (e.g. `"TESS"`).
+        #[arg(long, default_value = "ymir override add")]
+        instrument: String,
+    },
+    /// Remove a per-field override from `<world>/overrides.json`.
+    ///
+    /// If the stage section becomes empty after removing the field, the
+    /// entire stage key is dropped. Removing the last field from every
+    /// stage produces a valid but empty overrides file (which is a no-op
+    /// for `ymir regenerate`).
+    Remove {
+        /// Path to the world directory.
+        #[arg(long)]
+        world: PathBuf,
+        /// Dot-separated field path to remove, e.g. `orbital_body.radius`.
+        #[arg(long)]
+        field: String,
+    },
+    /// Print all overrides currently stored in `<world>/overrides.json`.
+    ///
+    /// Displays each override as `<stage>.<field> = <value>` with its
+    /// provenance reference and instrument. If the file does not exist,
+    /// reports that no overrides are set.
+    List {
+        /// Path to the world directory.
+        #[arg(long)]
+        world: PathBuf,
+    },
+    /// Validate that a field path resolves to a real `Sourced<T>` field.
+    ///
+    /// Reads `<world>/provenance.json` and checks that the given path
+    /// exists as a `{ value, source }` leaf in the per-field stages
+    /// (stellar, orbital_body, atmosphere). Aggregate stages (skeleton,
+    /// climate, biome) are always rejected because they carry no per-field
+    /// tree.
+    ///
+    /// Exits 0 if the path is valid, non-zero otherwise.
+    Validate {
+        /// Path to the world directory (must contain `provenance.json`).
+        #[arg(long)]
+        world: PathBuf,
+        /// Dot-separated field path to validate, e.g. `orbital_body.radius`.
+        #[arg(long)]
+        field: String,
+    },
 }
 
 fn main() -> ExitCode {
@@ -267,6 +356,26 @@ fn main() -> ExitCode {
             full,
             summary: _,
         } => run_provenance(&world, full),
+        Commands::Override { action } => match action {
+            OverrideAction::Add {
+                world,
+                field,
+                value,
+                unit,
+                reference,
+                instrument,
+            } => run_override_add(&OverrideAddArgs {
+                world,
+                field,
+                value,
+                unit,
+                reference,
+                instrument,
+            }),
+            OverrideAction::Remove { world, field } => run_override_remove(&world, &field),
+            OverrideAction::List { world } => run_override_list(&world),
+            OverrideAction::Validate { world, field } => run_override_validate(&world, &field),
+        },
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -1912,6 +2021,538 @@ fn extract_gaia_id(catalog_id: &str) -> Option<u64> {
         .and_then(|s| s.trim().parse::<u64>().ok())
 }
 
+// ---------------------------------------------------------------------------
+// Override authoring helpers (CORE-08)
+// ---------------------------------------------------------------------------
+
+/// Pipeline stages that carry per-field `Sourced<T>` provenance and have a
+/// corresponding slot in [`OverrideFile`], making them valid targets for
+/// `ymir override add`.
+///
+/// Note: `stellar` has per-field provenance in `provenance.json` but no
+/// dedicated override slot in [`OverrideFile`] (Phase 1 does not support
+/// re-running catalog lookup from an override). It is excluded here.
+/// Aggregate stages (skeleton, climate, biome) store only a single summary
+/// source node and do not expose individual fields.
+const PER_FIELD_STAGES: &[&str] = &["orbital_body", "atmosphere"];
+
+/// Aggregate stages that reject per-field overrides. Also includes `stellar`
+/// because [`OverrideFile`] has no stellar slot in Phase 1.
+const AGGREGATE_STAGES: &[&str] = &["stellar", "skeleton", "climate", "biome"];
+
+/// Resolved arguments for `ymir override add`.
+struct OverrideAddArgs {
+    world: PathBuf,
+    field: String,
+    value: String,
+    unit: Option<String>,
+    reference: String,
+    instrument: String,
+}
+
+/// Load the world's `overrides.json`, or return a default [`OverrideFile`]
+/// seeded from the world manifest if the file does not yet exist.
+///
+/// If `overrides.json` does not exist we need a valid `target_star` to seed the
+/// new file; we pull it from the manifest.
+fn load_or_create_override_file(wd: &WorldDirectory) -> Result<OverrideFile, String> {
+    let path = wd.overrides_path();
+    if path.exists() {
+        OverrideFile::load(&path).map_err(|e| format!("failed to load {}: {}", path.display(), e))
+    } else {
+        // Bootstrap from the manifest's star name.
+        let manifest = wd.load_manifest().map_err(|e| {
+            format!("failed to load manifest (needed to create overrides.json): {e}")
+        })?;
+        Ok(OverrideFile {
+            version: "1.0".to_string(),
+            target_star: manifest.star_name,
+            target_planet: manifest.planet_name,
+            overrides: StageOverrides::default(),
+        })
+    }
+}
+
+/// Save an [`OverrideFile`] to `<world>/overrides.json`.
+fn save_override_file(wd: &WorldDirectory, file: &OverrideFile) -> Result<(), String> {
+    let path = wd.overrides_path();
+    let json = serde_json::to_string_pretty(file)
+        .map_err(|e| format!("failed to serialize overrides: {e}"))?;
+    std::fs::write(&path, json).map_err(|e| format!("failed to write {}: {}", path.display(), e))
+}
+
+/// Split a dot-separated field path into `(stage, field_tail)`.
+///
+/// The first segment is the stage name; the remainder (joined with `.`) is the
+/// field path within that stage's JSON object. Returns an error if the path has
+/// fewer than two segments or if the stage is unsupported.
+fn parse_field_path(field: &str) -> Result<(String, String), String> {
+    let parts: Vec<&str> = field.splitn(2, '.').collect();
+    if parts.len() < 2 || parts[1].is_empty() {
+        return Err(format!(
+            "invalid field path '{field}': expected '<stage>.<field>' \
+             e.g. 'orbital_body.radius'"
+        ));
+    }
+    let stage = parts[0].to_string();
+    let tail = parts[1].to_string();
+
+    // Reject aggregate stages immediately — they have no per-field override slot.
+    if AGGREGATE_STAGES.contains(&stage.as_str()) {
+        let reason = if stage == "stellar" {
+            "the stellar stage has no override slot in Phase 1 \
+             (star catalog data cannot be replaced via overrides.json)"
+        } else {
+            "skeleton/climate/biome are aggregate stages with no per-field \
+             provenance tree; use a full stage-level JSON override with \
+             `ymir regenerate --overrides` instead"
+        };
+        return Err(format!(
+            "stage '{stage}' does not support per-field overrides: {reason}"
+        ));
+    }
+
+    if !PER_FIELD_STAGES.contains(&stage.as_str()) {
+        let known: Vec<&str> = PER_FIELD_STAGES
+            .iter()
+            .chain(AGGREGATE_STAGES.iter())
+            .copied()
+            .collect();
+        return Err(format!(
+            "unknown stage '{stage}'; known stages: {}",
+            known.join(", ")
+        ));
+    }
+
+    Ok((stage, tail))
+}
+
+/// Like [`parse_field_path`] but also accepts `stellar` for read-only
+/// validation against `provenance.json`.
+///
+/// Used by `ymir override validate`, which checks field existence in the
+/// provenance tree rather than writing to `overrides.json`. The stellar stage
+/// has no override slot but does carry per-field provenance, so its fields
+/// are valid targets for validation even though they cannot be overridden.
+fn parse_field_path_lenient(field: &str) -> Result<(String, String), String> {
+    let parts: Vec<&str> = field.splitn(2, '.').collect();
+    if parts.len() < 2 || parts[1].is_empty() {
+        return Err(format!(
+            "invalid field path '{field}': expected '<stage>.<field>' \
+             e.g. 'orbital_body.radius'"
+        ));
+    }
+    let stage = parts[0].to_string();
+    let tail = parts[1].to_string();
+
+    // All per-field stages (including stellar) are valid for validation.
+    let all_perfield = &["stellar", "orbital_body", "atmosphere"];
+    if AGGREGATE_STAGES.contains(&stage.as_str()) && stage != "stellar" {
+        return Err(format!(
+            "stage '{stage}' is an aggregate stage and does not have a \
+             per-field provenance tree; no field paths are valid for it"
+        ));
+    }
+    if !all_perfield.contains(&stage.as_str()) {
+        let known: Vec<&str> = all_perfield
+            .iter()
+            .chain(AGGREGATE_STAGES.iter().filter(|&&s| s != "stellar"))
+            .copied()
+            .collect();
+        return Err(format!(
+            "unknown stage '{stage}'; known stages: {}",
+            known.join(", ")
+        ));
+    }
+
+    Ok((stage, tail))
+}
+
+/// Get a mutable reference to the stage's JSON value in the override file,
+/// creating an empty object if it is not yet set.
+fn stage_value_mut<'a>(
+    overrides: &'a mut StageOverrides,
+    stage: &str,
+) -> &'a mut serde_json::Value {
+    let slot = match stage {
+        "orbital_body" => &mut overrides.orbital_body,
+        "atmosphere" => &mut overrides.atmosphere,
+        _ => unreachable!("caller checked stage list via PER_FIELD_STAGES"),
+    };
+    slot.get_or_insert_with(|| serde_json::Value::Object(Default::default()))
+}
+
+/// Get an immutable reference to the stage's JSON value if present.
+fn stage_value<'a>(overrides: &'a StageOverrides, stage: &str) -> Option<&'a serde_json::Value> {
+    match stage {
+        "orbital_body" => overrides.orbital_body.as_ref(),
+        "atmosphere" => overrides.atmosphere.as_ref(),
+        _ => None,
+    }
+}
+
+/// Set a nested dot-path within a JSON object to `new_value`, creating
+/// intermediate objects as needed.
+fn json_set_path(root: &mut serde_json::Value, path: &str, new_value: serde_json::Value) {
+    let parts: Vec<&str> = path.split('.').collect();
+    let mut cur = root;
+    for &key in &parts[..parts.len() - 1] {
+        cur = cur
+            .as_object_mut()
+            .expect("intermediate JSON node is not an object")
+            .entry(key)
+            .or_insert_with(|| serde_json::Value::Object(Default::default()));
+    }
+    let last_key = *parts.last().expect("parts non-empty");
+    cur.as_object_mut()
+        .expect("leaf parent is not an object")
+        .insert(last_key.to_string(), new_value);
+}
+
+/// Remove a nested dot-path from a JSON object. Returns `true` if the key was
+/// present and removed.
+fn json_remove_path(root: &mut serde_json::Value, path: &str) -> bool {
+    let parts: Vec<&str> = path.split('.').collect();
+    if parts.len() == 1 {
+        return root
+            .as_object_mut()
+            .map(|m| m.remove(parts[0]).is_some())
+            .unwrap_or(false);
+    }
+    // Navigate to the parent object.
+    let mut cur = root;
+    for &key in &parts[..parts.len() - 1] {
+        match cur.as_object_mut() {
+            Some(m) => match m.get_mut(key) {
+                Some(child) => cur = child,
+                None => return false,
+            },
+            None => return false,
+        }
+    }
+    let last_key = *parts.last().expect("parts non-empty");
+    cur.as_object_mut()
+        .map(|m| m.remove(last_key).is_some())
+        .unwrap_or(false)
+}
+
+/// Build the JSON value to store for an override field.
+///
+/// For per-field `Sourced<T>` stages the value is stored as a bare scalar or
+/// JSON value. The `merge_json` function in the pipeline knows how to wrap
+/// it in the `{value, source: Observed{...}}` envelope on read-back.
+/// We additionally store `_reference` and `_instrument` as sibling keys so
+/// `ymir override list` can surface them without re-parsing the full pipeline.
+fn build_override_value(
+    value_json: serde_json::Value,
+    reference: &str,
+    instrument: &str,
+    unit: Option<&str>,
+) -> serde_json::Value {
+    // If the caller gave us a bare scalar (the common case), store as:
+    //   { "__value": <scalar>, "__reference": "...", "__instrument": "...", "__unit": "..." }
+    // When regenerate applies the override, `merge_json` sees a JSON Object at
+    // the Sourced leaf and merges its keys, so we must wrap the actual value
+    // under a recognized key. However, `merge_json` currently only looks at
+    // two-key {value,source} objects; to avoid confusion we use the pipeline's
+    // existing envelope format directly.
+    //
+    // Preferred shape: `{"value": <v>, "source": {"Observed": {...}}}`.
+    // This is exactly what `make_user_observed_sourced_json` produces, extended
+    // with optional unit metadata in the source annotation.
+    let mut source_inner = serde_json::json!({
+        "reference": reference,
+        "instrument": instrument,
+        "date": "",
+        "uncertainty": null,
+    });
+    if let Some(u) = unit {
+        source_inner["unit"] = serde_json::Value::String(u.to_string());
+    }
+    serde_json::json!({
+        "value": value_json,
+        "source": { "Observed": source_inner },
+    })
+}
+
+/// Run `ymir override add`.
+fn run_override_add(args: &OverrideAddArgs) -> Result<(), String> {
+    let wd = WorldDirectory {
+        root: args.world.clone(),
+    };
+    ensure_world_dir(&wd)?;
+
+    let (stage, field_tail) = parse_field_path(&args.field)?;
+
+    // Parse the supplied value as JSON.
+    let value_json: serde_json::Value = serde_json::from_str(&args.value).map_err(|_| {
+        // Try treating as a bare string.
+        format!(
+            "could not parse --value '{}' as JSON; \
+             wrap strings in quotes, e.g. --value '\"text\"'",
+            args.value
+        )
+    })?;
+
+    // Load or create the overrides file.
+    let mut ov_file = load_or_create_override_file(&wd)?;
+
+    // Build the `{value, source: Observed{...}}` envelope.
+    let envelope = build_override_value(
+        value_json,
+        &args.reference,
+        &args.instrument,
+        args.unit.as_deref(),
+    );
+
+    // Inject into the stage slot.
+    let stage_val = stage_value_mut(&mut ov_file.overrides, &stage);
+    json_set_path(stage_val, &field_tail, envelope);
+
+    save_override_file(&wd, &ov_file)?;
+
+    let unit_display = args
+        .unit
+        .as_deref()
+        .map(|u| format!(" {u}"))
+        .unwrap_or_default();
+    println!(
+        "override add: {}.{} = <value>{unit_display}  [{}]",
+        stage, field_tail, args.reference
+    );
+    println!("  saved to {}", wd.overrides_path().display());
+    println!(
+        "  run `ymir regenerate --world {} --overrides {}` to propagate",
+        wd.root.display(),
+        wd.overrides_path().display()
+    );
+    Ok(())
+}
+
+/// Run `ymir override remove`.
+fn run_override_remove(world: &Path, field: &str) -> Result<(), String> {
+    let wd = WorldDirectory {
+        root: world.to_path_buf(),
+    };
+    ensure_world_dir(&wd)?;
+
+    let path = wd.overrides_path();
+    if !path.exists() {
+        return Err(format!(
+            "overrides.json not found in {} (no overrides set)",
+            world.display()
+        ));
+    }
+
+    let (stage, field_tail) = parse_field_path(field)?;
+    let mut ov_file = OverrideFile::load(&path)
+        .map_err(|e| format!("failed to load {}: {}", path.display(), e))?;
+
+    let stage_val = match stage.as_str() {
+        "orbital_body" => ov_file.overrides.orbital_body.as_mut(),
+        "atmosphere" => ov_file.overrides.atmosphere.as_mut(),
+        _ => unreachable!("parse_field_path validates stage"),
+    };
+
+    let removed = match stage_val {
+        Some(v) => json_remove_path(v, &field_tail),
+        None => false,
+    };
+
+    if !removed {
+        return Err(format!(
+            "field '{field}' not found in overrides.json (nothing to remove)"
+        ));
+    }
+
+    // If the stage object is now empty, clear the slot entirely.
+    let clear_orbital = stage == "orbital_body"
+        && ov_file
+            .overrides
+            .orbital_body
+            .as_ref()
+            .and_then(|v| v.as_object())
+            .map(|m| m.is_empty())
+            .unwrap_or(false);
+    let clear_atmosphere = stage == "atmosphere"
+        && ov_file
+            .overrides
+            .atmosphere
+            .as_ref()
+            .and_then(|v| v.as_object())
+            .map(|m| m.is_empty())
+            .unwrap_or(false);
+
+    if clear_orbital {
+        ov_file.overrides.orbital_body = None;
+    }
+    if clear_atmosphere {
+        ov_file.overrides.atmosphere = None;
+    }
+
+    save_override_file(&wd, &ov_file)?;
+    println!("override remove: removed '{field}' from overrides.json");
+    Ok(())
+}
+
+/// Run `ymir override list`.
+fn run_override_list(world: &Path) -> Result<(), String> {
+    let wd = WorldDirectory {
+        root: world.to_path_buf(),
+    };
+    let path = wd.overrides_path();
+    if !path.exists() {
+        println!(
+            "No overrides set (overrides.json not found in {}).",
+            world.display()
+        );
+        return Ok(());
+    }
+
+    let ov_file = OverrideFile::load(&path)
+        .map_err(|e| format!("failed to load {}: {}", path.display(), e))?;
+
+    println!("Overrides for {} ({})", ov_file.target_star, path.display());
+
+    let mut found_any = false;
+    for stage in PER_FIELD_STAGES {
+        if let Some(stage_val) = stage_value(&ov_file.overrides, stage) {
+            if let Some(obj) = stage_val.as_object() {
+                for (key, val) in obj {
+                    print_override_field(stage, key, val);
+                    found_any = true;
+                }
+            }
+        }
+    }
+    if !found_any {
+        println!("  (no per-field overrides set)");
+    }
+    Ok(())
+}
+
+/// Print a single override field entry for `ymir override list`.
+fn print_override_field(stage: &str, field: &str, val: &serde_json::Value) {
+    // The value is either a plain scalar or a `{value, source}` envelope.
+    if let Some(obj) = val.as_object() {
+        if let (Some(v), Some(src)) = (obj.get("value"), obj.get("source")) {
+            let reference = src
+                .get("Observed")
+                .and_then(|o| o.get("reference"))
+                .and_then(|r| r.as_str())
+                .unwrap_or("?");
+            let instrument = src
+                .get("Observed")
+                .and_then(|o| o.get("instrument"))
+                .and_then(|i| i.as_str())
+                .unwrap_or("?");
+            let unit = src
+                .get("Observed")
+                .and_then(|o| o.get("unit"))
+                .and_then(|u| u.as_str())
+                .map(|u| format!(" {u}"))
+                .unwrap_or_default();
+            println!("  {stage}.{field} = {v}{unit}  [{reference} / {instrument}]");
+            return;
+        }
+    }
+    // Fallback: raw JSON.
+    println!("  {stage}.{field} = {val}");
+}
+
+/// Run `ymir override validate`.
+///
+/// Reads `provenance.json` and checks that `field` exists as a `{value, source}`
+/// leaf in the per-field stages. Prints a success or failure message and
+/// returns `Ok(())` / `Err(...)` accordingly.
+fn run_override_validate(world: &Path, field: &str) -> Result<(), String> {
+    let wd = WorldDirectory {
+        root: world.to_path_buf(),
+    };
+    ensure_world_dir(&wd)?;
+
+    // Use the lenient parser so `stellar.*` fields are also checkable even
+    // though they cannot be overridden via `ymir override add`.
+    let (stage, field_tail) = parse_field_path_lenient(field)?;
+
+    let prov_path = wd.provenance_path();
+    if !prov_path.exists() {
+        return Err(format!(
+            "provenance.json not found in {} \
+             (run `ymir generate` first to create it)",
+            world.display()
+        ));
+    }
+
+    let report =
+        load_provenance(&prov_path).map_err(|e| format!("failed to load provenance.json: {e}"))?;
+
+    let stage_prov = report.stages.get(&stage).ok_or_else(|| {
+        format!(
+            "stage '{stage}' not found in provenance.json \
+             (available: {})",
+            report.stages.keys().cloned().collect::<Vec<_>>().join(", ")
+        )
+    })?;
+
+    // Walk the field tree to find the leaf.
+    if find_field_in_json(&stage_prov.fields, &field_tail) {
+        println!("valid: '{field}' resolves to a Sourced field in stage '{stage}'");
+        Ok(())
+    } else {
+        Err(format!(
+            "unknown field path '{field}': '{field_tail}' not found as a \
+             `Sourced<T>` leaf in the '{stage}' provenance tree"
+        ))
+    }
+}
+
+/// Walk a JSON value tree looking for a `{value, source}` leaf at the given
+/// dot-separated path.
+fn find_field_in_json(root: &serde_json::Value, path: &str) -> bool {
+    let parts: Vec<&str> = path.split('.').collect();
+    let mut cur = root;
+    for &key in &parts {
+        match cur.as_object() {
+            Some(map) => {
+                // If the current node is already a Sourced leaf, stop — we
+                // can't descend further into its `value` or `source` children.
+                if map.len() == 2 && map.contains_key("value") && map.contains_key("source") {
+                    return false;
+                }
+                match map.get(key) {
+                    Some(child) => cur = child,
+                    None => return false,
+                }
+            }
+            None => return false,
+        }
+    }
+    // At the target node: confirm it's a Sourced leaf.
+    if let Some(map) = cur.as_object() {
+        map.len() == 2 && map.contains_key("value") && map.contains_key("source")
+    } else {
+        false
+    }
+}
+
+/// Verify that `world` is a directory containing `manifest.json`.
+fn ensure_world_dir(wd: &WorldDirectory) -> Result<(), String> {
+    if !wd.root.is_dir() {
+        return Err(format!(
+            "world directory '{}' does not exist or is not a directory",
+            wd.root.display()
+        ));
+    }
+    if !wd.manifest_path().exists() {
+        return Err(format!(
+            "manifest.json not found in '{}' (is this a ymir world directory?)",
+            wd.root.display()
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2536,5 +3177,310 @@ mod tests {
         let decoded = image::open(&png_path).expect("decodes as a valid image");
         assert!(decoded.width() > 0);
         assert!(decoded.height() > 0);
+    }
+
+    // -------------------------------------------------------------------------
+    // CORE-08: override authoring helpers
+    // -------------------------------------------------------------------------
+
+    /// Generate a minimal Earth world for override tests.
+    fn earth_world_for_override(tmp: &std::path::Path) -> PathBuf {
+        let out = tmp.join("world");
+        let mut a = args(1, out.clone(), 0);
+        a.star = "Earth".to_string();
+        run_generate(&a).expect("generate earth for override test");
+        out
+    }
+
+    // --- parse_field_path -------------------------------------------------------
+
+    #[test]
+    fn parse_field_path_valid() {
+        let (stage, tail) = parse_field_path("orbital_body.radius").unwrap();
+        assert_eq!(stage, "orbital_body");
+        assert_eq!(tail, "radius");
+    }
+
+    #[test]
+    fn parse_field_path_nested() {
+        let (stage, tail) = parse_field_path("atmosphere.surface_pressure").unwrap();
+        assert_eq!(stage, "atmosphere");
+        assert_eq!(tail, "surface_pressure");
+    }
+
+    #[test]
+    fn parse_field_path_rejects_missing_dot() {
+        let err = parse_field_path("orbital_body").unwrap_err();
+        assert!(
+            err.contains("expected '<stage>.<field>'"),
+            "unexpected: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_field_path_rejects_aggregate_skeleton() {
+        let err = parse_field_path("skeleton.anything").unwrap_err();
+        assert!(err.contains("aggregate"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn parse_field_path_rejects_aggregate_climate() {
+        let err = parse_field_path("climate.temperature").unwrap_err();
+        assert!(err.contains("aggregate"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn parse_field_path_rejects_stellar() {
+        let err = parse_field_path("stellar.effective_temp").unwrap_err();
+        assert!(
+            err.contains("stellar"),
+            "should mention stellar stage: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_field_path_rejects_unknown_stage() {
+        let err = parse_field_path("bogus.field").unwrap_err();
+        assert!(err.contains("unknown stage"), "unexpected: {err}");
+    }
+
+    // --- parse_field_path_lenient -----------------------------------------------
+
+    #[test]
+    fn parse_field_path_lenient_accepts_stellar() {
+        let (stage, tail) = parse_field_path_lenient("stellar.effective_temp").unwrap();
+        assert_eq!(stage, "stellar");
+        assert_eq!(tail, "effective_temp");
+    }
+
+    #[test]
+    fn parse_field_path_lenient_rejects_aggregate() {
+        let err = parse_field_path_lenient("skeleton.anything").unwrap_err();
+        assert!(err.contains("aggregate"), "unexpected: {err}");
+    }
+
+    // --- add / list / remove round-trip -----------------------------------------
+
+    #[test]
+    fn override_add_creates_overrides_json() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let world = earth_world_for_override(tmp.path());
+
+        run_override_add(&OverrideAddArgs {
+            world: world.clone(),
+            field: "orbital_body.radius".to_string(),
+            value: "1.073".to_string(),
+            unit: Some("R_earth".to_string()),
+            reference: "Gilbert+ 2023".to_string(),
+            instrument: "TESS".to_string(),
+        })
+        .expect("override add should succeed");
+
+        let ov_path = world.join("overrides.json");
+        assert!(ov_path.is_file(), "overrides.json should be created");
+        let ov_file = OverrideFile::load(&ov_path).expect("should parse");
+        assert!(
+            ov_file.overrides.orbital_body.is_some(),
+            "orbital_body slot should be set"
+        );
+        let ob = ov_file.overrides.orbital_body.unwrap();
+        let radius = ob.get("radius").expect("radius key missing");
+        let val = radius.get("value").expect("value key missing");
+        assert!(
+            (val.as_f64().unwrap() - 1.073).abs() < 1e-9,
+            "value mismatch: {val}"
+        );
+    }
+
+    #[test]
+    fn override_list_shows_added_field() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let world = earth_world_for_override(tmp.path());
+
+        run_override_add(&OverrideAddArgs {
+            world: world.clone(),
+            field: "orbital_body.mass".to_string(),
+            value: "1.07".to_string(),
+            unit: None,
+            reference: "Test ref".to_string(),
+            instrument: "TESS".to_string(),
+        })
+        .expect("add ok");
+
+        // list should return Ok and not error.
+        run_override_list(&world).expect("list ok");
+    }
+
+    #[test]
+    fn override_remove_removes_field() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let world = earth_world_for_override(tmp.path());
+
+        run_override_add(&OverrideAddArgs {
+            world: world.clone(),
+            field: "orbital_body.radius".to_string(),
+            value: "1.073".to_string(),
+            unit: None,
+            reference: "ref".to_string(),
+            instrument: "inst".to_string(),
+        })
+        .expect("add ok");
+
+        run_override_remove(&world, "orbital_body.radius").expect("remove ok");
+
+        let ov_path = world.join("overrides.json");
+        let ov_file = OverrideFile::load(&ov_path).expect("load ok");
+        // After removing the only field, the slot should be cleared.
+        assert!(
+            ov_file.overrides.orbital_body.is_none(),
+            "orbital_body slot should be None after removing last field"
+        );
+    }
+
+    #[test]
+    fn override_add_remove_multiple_fields_round_trip() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let world = earth_world_for_override(tmp.path());
+
+        run_override_add(&OverrideAddArgs {
+            world: world.clone(),
+            field: "orbital_body.radius".to_string(),
+            value: "1.073".to_string(),
+            unit: Some("R_earth".to_string()),
+            reference: "ref1".to_string(),
+            instrument: "inst1".to_string(),
+        })
+        .expect("add radius ok");
+
+        run_override_add(&OverrideAddArgs {
+            world: world.clone(),
+            field: "orbital_body.mass".to_string(),
+            value: "1.07".to_string(),
+            unit: Some("M_earth".to_string()),
+            reference: "ref2".to_string(),
+            instrument: "inst2".to_string(),
+        })
+        .expect("add mass ok");
+
+        // Both fields present.
+        let ov_path = world.join("overrides.json");
+        let ov_file = OverrideFile::load(&ov_path).expect("load");
+        let ob = ov_file.overrides.orbital_body.as_ref().unwrap();
+        assert!(ob.get("radius").is_some());
+        assert!(ob.get("mass").is_some());
+
+        // Remove just radius.
+        run_override_remove(&world, "orbital_body.radius").expect("remove radius ok");
+        let ov_file2 = OverrideFile::load(&ov_path).expect("load2");
+        let ob2 = ov_file2.overrides.orbital_body.as_ref().unwrap();
+        assert!(ob2.get("radius").is_none(), "radius should be gone");
+        assert!(ob2.get("mass").is_some(), "mass should remain");
+    }
+
+    #[test]
+    fn override_remove_missing_field_errors() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let world = earth_world_for_override(tmp.path());
+
+        run_override_add(&OverrideAddArgs {
+            world: world.clone(),
+            field: "orbital_body.radius".to_string(),
+            value: "1.0".to_string(),
+            unit: None,
+            reference: "ref".to_string(),
+            instrument: "inst".to_string(),
+        })
+        .expect("add ok");
+
+        let err = run_override_remove(&world, "orbital_body.mass").unwrap_err();
+        assert!(
+            err.contains("not found"),
+            "expected 'not found' error: {err}"
+        );
+    }
+
+    // --- validate ----------------------------------------------------------------
+
+    #[test]
+    fn override_validate_accepts_known_field() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let world = earth_world_for_override(tmp.path());
+        // radius is a Sourced<f64> field on OrbitalBody.
+        run_override_validate(&world, "orbital_body.radius").expect("validate ok");
+    }
+
+    #[test]
+    fn override_validate_accepts_stellar_field() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let world = earth_world_for_override(tmp.path());
+        // effective_temp is a Sourced<f64> field on StarContext.
+        run_override_validate(&world, "stellar.effective_temp").expect("validate stellar ok");
+    }
+
+    #[test]
+    fn override_validate_accepts_atmosphere_field() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let world = earth_world_for_override(tmp.path());
+        run_override_validate(&world, "atmosphere.surface_pressure").expect("validate atmo ok");
+    }
+
+    #[test]
+    fn override_validate_rejects_unknown_field() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let world = earth_world_for_override(tmp.path());
+        let err = run_override_validate(&world, "orbital_body.nonexistent_field").unwrap_err();
+        assert!(
+            err.contains("not found") || err.contains("unknown"),
+            "expected path-not-found error: {err}"
+        );
+    }
+
+    #[test]
+    fn override_validate_rejects_aggregate_stage() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let world = earth_world_for_override(tmp.path());
+        let err = run_override_validate(&world, "skeleton.anything").unwrap_err();
+        assert!(
+            err.contains("aggregate"),
+            "expected aggregate-stage rejection: {err}"
+        );
+    }
+
+    #[test]
+    fn override_validate_rejects_unknown_stage() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let world = earth_world_for_override(tmp.path());
+        let err = run_override_validate(&world, "bogus.field").unwrap_err();
+        assert!(
+            err.contains("unknown"),
+            "expected unknown-stage error: {err}"
+        );
+    }
+
+    #[test]
+    fn override_add_rejects_aggregate_stage() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let world = earth_world_for_override(tmp.path());
+        let err = run_override_add(&OverrideAddArgs {
+            world,
+            field: "skeleton.anything".to_string(),
+            value: "1.0".to_string(),
+            unit: None,
+            reference: "ref".to_string(),
+            instrument: "inst".to_string(),
+        })
+        .unwrap_err();
+        assert!(
+            err.contains("aggregate") || err.contains("skeleton"),
+            "expected aggregate-stage rejection: {err}"
+        );
+    }
+
+    #[test]
+    fn override_list_empty_when_no_overrides_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let world = earth_world_for_override(tmp.path());
+        // No overrides.json written yet — list should succeed and say "none".
+        run_override_list(&world).expect("list on missing file should succeed");
     }
 }

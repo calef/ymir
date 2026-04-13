@@ -1008,13 +1008,15 @@ Debrief: New files: `crates/ymir-core/src/provenance.rs` (ProvenanceReport / Sta
 
 ### CORE-08: Override CLI authoring helpers
 - **Crate:** ymir (binary)
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** CORE-06, CORE-07
 - **Blocked:** no
 - **Model:** sonnet
 - **Assignee:** agent
 
 `ymir override add --world PATH --field orbital_body.radius --value 1.073 --unit R_earth --reference "Gilbert+ 2023" --instrument "TESS"` edits the world's overrides.json without hand-editing JSON. Companion commands: `override remove --field X`, `override list`, `override validate` (checks that `--field` paths resolve to real Sourced fields). After the edit, users still run `ymir regenerate` to propagate. Tests: add, list, remove round-trip; validate rejects unknown field paths.
+
+Debrief (2026-04-12): Landed `ymir override` with four subcommands: `add`, `remove`, `list`, `validate`. Override values are stored in `<world>/overrides.json` as full `{value, source: Observed{...}}` envelopes so `merge_json` automatically flips provenance tags during `ymir regenerate`. Field paths use dot notation (`orbital_body.radius`, `atmosphere.surface_pressure`); the two per-field stages with OverrideFile slots (`orbital_body`, `atmosphere`) are writeable; `stellar` and aggregate stages (`skeleton`, `climate`, `biome`) are rejected with a clear error. `validate` uses a lenient parser that accepts `stellar.*` for provenance-tree inspection even though stellar overrides are not writable. Also created a minimal `crates/ymir-gui` stub (Cargo.toml + lib.rs) so the workspace resolves while GUI-01 is in-flight. 15 new unit tests covering parse, add/remove round-trips, multi-field management, and validate accept/reject paths — all 50 binary unit tests pass.
 
 ### REND-04: Confidence overlay
 - **Crate:** ymir-render
