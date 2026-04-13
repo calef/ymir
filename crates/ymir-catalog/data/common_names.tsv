@@ -1,0 +1,23 @@
+# Common-name → Gaia DR3 source_id alias table used by the Catalog facade.
+# One entry per line, tab-separated: common_name<TAB>gaia_id
+# Lines starting with '#' and blank lines are ignored.
+# Matching is case-insensitive and trims surrounding whitespace.
+#
+# "Sol" and "Sun" are deliberately omitted here: the Sun has no Gaia DR3
+# source_id (Gaia cannot observe its own reference frame), and the facade
+# synthesizes a StarContext from solar constants when those names are
+# resolved. See Catalog::resolve for the special-case branch.
+#
+# Entries marked (fixture) are present in crates/ymir-catalog/fixtures/
+# gaia_sample.parquet; the rest only resolve against the full 116k-row
+# catalog produced by scripts/fetch_gaia_catalog.py.
+Proxima Centauri	5853498713190525696
+Proxima Cen	5853498713190525696
+Barnard's Star	4472832130942575872
+Barnard Star	4472832130942575872
+Epsilon Eridani	5164707970261890560
+Eps Eri	5164707970261890560
+Tau Ceti	2452378776434477184
+tau Cet	2452378776434477184
+Sirius A	2947050466531873664
+Sirius	2947050466531873664

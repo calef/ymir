@@ -1,13 +1,31 @@
 [package]
 name = "ymir-catalog"
-version = "0.1.0"
-edition = "2024"
-license = "MIT OR Apache-2.0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+authors.workspace = true
 description = "Stellar catalog ingestion from Gaia DR3 and the NASA Exoplanet Archive"
+documentation = "https://docs.rs/ymir-catalog"
+keywords = ["simulation", "worldgen", "exoplanets", "stars"]
+categories = ["science", "simulation"]
 
 [dependencies]
+# `parquet` is preferred over `polars` to keep the dependency footprint small.
+# Default features pull in arrow integration which we do not use; disable them
+# and enable only the Snappy/Zstd compression codecs that Gaia TAP Parquet
+# output uses.
+parquet = { version = "58", default-features = false, features = ["snap", "zstd"] }
+csv = "1"
 serde = { version = "1", features = ["derive"] }
-ymir-core = { path = "../ymir-core" }
+bincode = "1"
+thiserror = "1"
+ymir-core = { path = "../ymir-core", version = "0.1.0" }
 
 [dev-dependencies]
+approx = "0.5"
 serde_json = "1"
+tempfile = "3"

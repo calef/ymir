@@ -59,35 +59,33 @@ mod tests {
     fn sol_hz_brackets_earth() {
         // Earth's semi-major axis (1.0 AU) must fall inside the conservative HZ.
         let sol = sol_context();
+        let hz_inner = *sol.hz_inner.inner();
+        let hz_outer = *sol.hz_outer.inner();
         assert!(
-            sol.hz_inner < 1.0,
-            "HZ inner ({}) should be less than Earth SMA (1.0 AU)",
-            sol.hz_inner
+            hz_inner < 1.0,
+            "HZ inner ({hz_inner}) should be less than Earth SMA (1.0 AU)"
         );
         assert!(
-            sol.hz_outer > 1.0,
-            "HZ outer ({}) should be greater than Earth SMA (1.0 AU)",
-            sol.hz_outer
+            hz_outer > 1.0,
+            "HZ outer ({hz_outer}) should be greater than Earth SMA (1.0 AU)"
         );
         // Spot-check against Kopparapu+ 2013 published values (~0.99, ~1.70).
         assert!(
-            (sol.hz_inner - 0.99).abs() < 0.03,
-            "HZ inner for Sol expected ~0.99 AU, got {}",
-            sol.hz_inner
+            (hz_inner - 0.99).abs() < 0.03,
+            "HZ inner for Sol expected ~0.99 AU, got {hz_inner}"
         );
         assert!(
-            (sol.hz_outer - 1.70).abs() < 0.05,
-            "HZ outer for Sol expected ~1.70 AU, got {}",
-            sol.hz_outer
+            (hz_outer - 1.70).abs() < 0.05,
+            "HZ outer for Sol expected ~1.70 AU, got {hz_outer}"
         );
     }
 
     #[test]
     fn sol_hz_inner_less_than_outer() {
         let sol = sol_context();
-        assert!(sol.hz_inner < sol.hz_outer);
-        assert!(sol.hz_inner_optimistic < sol.hz_inner);
-        assert!(sol.hz_outer_optimistic > sol.hz_outer);
+        assert!(*sol.hz_inner.inner() < *sol.hz_outer.inner());
+        assert!(*sol.hz_inner_optimistic.inner() < *sol.hz_inner.inner());
+        assert!(*sol.hz_outer_optimistic.inner() > *sol.hz_outer.inner());
     }
 
     #[test]
