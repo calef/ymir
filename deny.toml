@@ -1,0 +1,77 @@
+# cargo-deny configuration for Ymir.
+#
+# Runs in CI via `cargo deny check advisories licenses sources bans`.
+# Schema: https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+# Evaluate the dependency graph with every feature enabled so optional
+# dependencies are audited as well.
+all-features = true
+# Empty targets list means cargo-deny considers all targets (no filtering).
+targets = []
+
+[advisories]
+version = 2
+# Warn (don't fail) on yanked crate versions. Bump to "deny" once we have
+# a reliable signal for when yanks are being picked up unintentionally.
+yanked = "warn"
+# IDs to ignore, e.g. "RUSTSEC-2020-0001". Keep empty until a real case
+# requires a documented exception.
+ignore = []
+
+[licenses]
+version = 2
+# Minimum SPDX parse confidence before cargo-deny treats a detected license
+# as authoritative. 0.8 is the default and catches most ambiguous expressions.
+confidence-threshold = 0.8
+# Permissive licenses we accept. Anything not in this list is rejected;
+# there is no separate `deny` list on purpose (default-deny posture).
+#
+# MPL-2.0 is allowed because it is file-scoped copyleft and is widely used
+# by dependencies (e.g., webpki-roots). It does not infect the workspace's
+# own code.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "BSD-2-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "Zlib",
+    "MPL-2.0",
+]
+
+# Skip license checks for the workspace's own crates. They are all licensed
+# "MIT OR Apache-2.0" but are not published, so license-file detection is
+# unnecessary noise.
+private = { ignore = true }
+
+[bans]
+# Warn when the graph contains multiple versions of the same crate. Upgrade
+# to "deny" once the tree is clean enough that a duplicate is always a bug.
+multiple-versions = "warn"
+# Wildcard version requirements (`*`) defeat SemVer and break reproducibility.
+wildcards = "deny"
+# Include every version and path in the duplicate-crate report so it's easy
+# to trace which dependency pulled in the extra copy.
+highlight = "all"
+# Crates we explicitly forbid. Populate when a specific crate needs banning.
+deny = []
+# Crates we tolerate in duplicate despite `multiple-versions = "warn"`.
+skip = []
+# Entire subtrees to exclude from duplicate-version checks (e.g., dev-only
+# tooling that drags in old versions).
+skip-tree = []
+
+[sources]
+# Reject dependencies fetched from unknown registries.
+unknown-registry = "deny"
+# Reject dependencies fetched from unknown git repositories.
+unknown-git = "deny"
+# Only crates.io is an approved registry source.
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# No git dependencies are currently allowed. Add specific repos here if a
+# git dependency becomes necessary.
+allow-git = []

@@ -1,0 +1,65 @@
+name: Feature request
+description: Propose new functionality
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement to ymir. Please describe the problem you're trying to solve and what you'd like to see.
+  - type: textarea
+    id: problem-statement
+    attributes:
+      label: Problem statement
+      description: What problem are you trying to solve? What's missing or broken about the current behavior?
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-behavior
+    attributes:
+      label: Proposed behavior
+      description: How should ymir behave? Describe the API, CLI flags, outputs, or pipeline changes.
+    validations:
+      required: true
+  - type: checkboxes
+    id: stages-affected
+    attributes:
+      label: Stage(s) affected
+      description: Check all pipeline stages (or subsystems) this feature would touch.
+      options:
+        - label: Stellar
+        - label: System
+        - label: Atmosphere
+        - label: Skeleton
+        - label: Climate
+        - label: Biome
+        - label: RegionalDetail
+        - label: Rendering
+        - label: CLI
+        - label: Storage
+        - label: Cross-cutting
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you considered and why you rejected them.
+    validations:
+      required: false
+  - type: input
+    id: related-tasks
+    attributes:
+      label: Relates to TASKS.md task IDs
+      description: If this relates to existing tasks, list their IDs (comma-separated).
+      placeholder: "DET-03, VALID-05"
+    validations:
+      required: false
+  - type: checkboxes
+    id: code-of-conduct
+    attributes:
+      label: Code of Conduct
+      description: By submitting this issue, you agree to follow our Code of Conduct.
+      options:
+        - label: I have read and agree to abide by the [Code of Conduct](../blob/main/CODE_OF_CONDUCT.md).
+          required: true

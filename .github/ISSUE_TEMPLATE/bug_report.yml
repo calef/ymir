@@ -1,0 +1,91 @@
+name: Bug report
+description: Report a defect in ymir
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please fill out the fields below so we can reproduce the issue quickly.
+  - type: input
+    id: ymir-version
+    attributes:
+      label: Ymir version
+      description: Output of `ymir --version`, or the git SHA if running from source.
+      placeholder: "ymir 0.1.0 (or git sha abc1234)"
+    validations:
+      required: true
+  - type: input
+    id: rust-version
+    attributes:
+      label: Rust version
+      description: Output of `rustc --version`.
+      placeholder: "rustc 1.78.0 (9b00956e5 2024-04-29)"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: Operating system where the bug was observed.
+      options:
+        - macOS
+        - Linux
+        - Windows
+    validations:
+      required: true
+  - type: textarea
+    id: ymir-info
+    attributes:
+      label: "`ymir info` output"
+      description: If applicable, paste the output of `ymir info` for the affected world.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: repro-steps
+    attributes:
+      label: Repro steps
+      description: Exact commands, seeds, and inputs needed to reproduce the bug.
+      placeholder: |
+        1. Run `ymir generate --star "Tau Ceti" --seed 42`
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened? Include error messages, stack traces, or screenshots.
+    validations:
+      required: true
+  - type: textarea
+    id: override-json
+    attributes:
+      label: Override JSON
+      description: If the bug involves overrides, paste the override JSON here.
+      render: json
+    validations:
+      required: false
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Anything else that might help diagnose the problem.
+    validations:
+      required: false
+  - type: checkboxes
+    id: code-of-conduct
+    attributes:
+      label: Code of Conduct
+      description: By submitting this issue, you agree to follow our Code of Conduct.
+      options:
+        - label: I have read and agree to abide by the [Code of Conduct](../blob/main/CODE_OF_CONDUCT.md).
+          required: true

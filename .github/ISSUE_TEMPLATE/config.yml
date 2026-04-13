@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  # TODO: once the repo is pushed to GitHub, replace this with a link to the
+  # private security advisory form, e.g.
+  # https://github.com/<owner>/ymir/security/advisories/new
+  - name: Security vulnerability
+    url: https://github.com/TODO/ymir/blob/main/SECURITY.md
+    about: Do not open a public issue for security problems. See SECURITY.md for the private disclosure process.

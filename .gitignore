@@ -4,3 +4,9 @@
 *.swo
 *~
 .DS_Store
+
+# Large, externally-fetched star catalogs. The Parquet files are produced by
+# scripts/fetch_gaia_catalog.py and land in data/catalog/. They are ~hundreds
+# of MB and are never committed. See CONTRIBUTING.md "Catalog setup".
+/data/catalog/*.parquet
+/data/catalog/*.csv

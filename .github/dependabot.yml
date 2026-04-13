@@ -1,0 +1,55 @@
+# Dependabot configuration for the Ymir workspace.
+#
+# - Cargo: watch the root Cargo.lock weekly; group minor/patch updates so the
+#   bot doesn't open a PR per crate. Major bumps stay ungrouped for review.
+# - GitHub Actions: watch workflow `uses:` pins weekly; group minor/patch
+#   updates since action versions tend to be stable.
+#
+# Ymir is pre-1.0 and depends on several pre-1.0 crates (e.g. `image`,
+# `noise`). We intentionally do NOT split semver-compatible updates further:
+# for a 0.x crate a "minor" bump (0.25 -> 0.26) is a breaking change in
+# Cargo's resolver, but we still want it grouped here to keep PR volume sane.
+# Reviewers should treat every Dependabot PR as requiring real review; no
+# auto-merge is configured.
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Los_Angeles"
+    target-branch: "main"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "deps(cargo):"
+      include: "scope"
+    groups:
+      cargo-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Los_Angeles"
+    target-branch: "main"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "deps(actions):"
+      include: "scope"
+    groups:
+      github-actions-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
