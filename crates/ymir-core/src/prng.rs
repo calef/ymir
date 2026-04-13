@@ -5,6 +5,36 @@ use rand_pcg::Pcg64;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+/// Mix a 64-bit value using the splitmix64 finalizer.
+///
+/// This is the finalization step of Sebastiano Vigna's splitmix64 PRNG. It is
+/// a bijective avalanche function with well-documented constants and is stable
+/// across compiler versions, making it suitable for deriving reproducible child
+/// seeds that must survive refactors and toolchain upgrades.
+#[inline]
+pub fn splitmix64(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = x;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// Derive a stable 64-bit seed from `(world_seed, key)`.
+///
+/// Uses splitmix64 mixing to combine the inputs into a single seed. Unlike
+/// `DefaultHasher`, the output is guaranteed stable across Rust compiler
+/// versions, so seeds derived through this function remain reproducible as
+/// long as the inputs are unchanged.
+#[inline]
+pub fn stable_derive_seed(world_seed: u64, key: u64) -> u64 {
+    // Two-stage mixing: mix each input individually, then combine and re-mix.
+    // This preserves entropy when either input is small (e.g., tile_index=0).
+    let a = splitmix64(world_seed);
+    let b = splitmix64(key ^ 0xD1B5_4A32_D192_ED03);
+    splitmix64(a ^ b.rotate_left(32))
+}
+
 /// A seeded, deterministic PRNG based on PCG64.
 ///
 /// `WorldRng` supports deriving independent child RNGs from a context string,
@@ -108,6 +138,34 @@ mod tests {
             let v = rng.next_range(0.0, 1.0);
             assert!((0.0..1.0).contains(&v), "value out of range: {v}");
         }
+    }
+
+    #[test]
+    fn splitmix64_is_stable() {
+        // Lock the output for known inputs so future refactors are caught.
+        assert_eq!(splitmix64(0), 0xE220_A839_7B1D_CDAF);
+        assert_eq!(splitmix64(1), 0x910A_2DEC_8902_5CC1);
+        assert_eq!(splitmix64(42), 0xBDD7_3226_2FEB_6E95);
+    }
+
+    #[test]
+    fn stable_derive_seed_is_deterministic() {
+        assert_eq!(stable_derive_seed(42, 7), stable_derive_seed(42, 7));
+        assert_ne!(stable_derive_seed(42, 7), stable_derive_seed(42, 8));
+        assert_ne!(stable_derive_seed(42, 7), stable_derive_seed(43, 7));
+        // Zero inputs must still produce non-zero, well-mixed output.
+        assert_ne!(stable_derive_seed(0, 0), 0);
+        assert_ne!(stable_derive_seed(0, 0), stable_derive_seed(0, 1));
+    }
+
+    #[test]
+    fn stable_derive_seed_literal_locks_algorithm() {
+        // Lock the exact output so future refactors can't silently change
+        // the derived seed. If this test fails, either the algorithm
+        // changed or the constants did; both are breaking changes.
+        assert_eq!(stable_derive_seed(42, 0), 0x4028_00AF_28D7_8446);
+        assert_eq!(stable_derive_seed(42, 1), 0xD315_7293_454D_A88D);
+        assert_eq!(stable_derive_seed(0xDEAD_BEEF, 1234), 0x4156_C7AE_CAC1_74AE);
     }
 
     #[test]

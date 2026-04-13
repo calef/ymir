@@ -129,7 +129,7 @@ mod tests {
     fn fresh_state_all_dirty() {
         let state = PipelineDirtyState::new();
         for stage in Stage::all() {
-            assert!(state.is_dirty(*stage), "{:?} should be dirty", stage);
+            assert!(state.is_dirty(*stage), "{stage:?} should be dirty");
         }
         assert_eq!(state.dirty_stages().len(), 7);
     }
@@ -138,7 +138,7 @@ mod tests {
     fn clean_state_none_dirty() {
         let state = PipelineDirtyState::clean();
         for stage in Stage::all() {
-            assert!(!state.is_dirty(*stage), "{:?} should be clean", stage);
+            assert!(!state.is_dirty(*stage), "{stage:?} should be clean");
         }
         assert_eq!(state.dirty_stages().len(), 0);
         assert_eq!(state.next_dirty(), None);
@@ -166,7 +166,7 @@ mod tests {
         state.mark_override_at(Stage::StellarContext);
 
         for stage in Stage::all() {
-            assert!(state.is_dirty(*stage), "{:?} should be dirty", stage);
+            assert!(state.is_dirty(*stage), "{stage:?} should be dirty");
         }
     }
 
@@ -176,7 +176,7 @@ mod tests {
         state.mark_override_at(Stage::RegionalDetail);
 
         for stage in &Stage::all()[..6] {
-            assert!(!state.is_dirty(*stage), "{:?} should be clean", stage);
+            assert!(!state.is_dirty(*stage), "{stage:?} should be clean");
         }
         assert!(state.is_dirty(Stage::RegionalDetail));
     }
