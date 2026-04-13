@@ -18,8 +18,12 @@ use ymir_core::{
 };
 use ymir_detail::{RegionSpec, RegionalDetail, RegionalDetailConfig};
 use ymir_render::biome_mollweide::{BiomeRenderConfig, render_biome_mollweide};
+use ymir_render::climate_mollweide::{
+    ClimateRenderConfig, render_moisture_mollweide, render_temperature_mollweide,
+};
 use ymir_render::globe_renderer::{GlobeRenderConfig, render_skeleton_mollweide_to_path};
 use ymir_render::overlays::{BIOME_OFF_MAP_BG, render_confidence_from_report};
+use ymir_render::plates_mollweide::{PlatesRenderConfig, render_plates_mollweide};
 use ymir_render::regional::{RegionalRenderConfig, render_regional_detail};
 use ymir_storage::manifest::{GenerationConfig, WorldManifest};
 use ymir_storage::world_io::WorldDirectory;
@@ -206,16 +210,17 @@ enum Commands {
     /// overlay after changing overrides, or for producing a higher-resolution
     /// PNG without re-simulating the world.
     ///
-    /// Available modes: `biome`, `elevation`, `confidence`.
+    /// Available modes: `elevation`, `biome`, `temperature`, `moisture`,
+    /// `confidence`, `plates`.
     Render {
         /// Path to the world directory (must contain `manifest.json`,
         /// `skeleton.bin`, `biomes.bin`, and `provenance.json`).
         #[arg(long)]
         world: PathBuf,
-        /// Render mode: `biome` (default), `elevation`, or `confidence`.
-        ///
-        /// `confidence` desaturates each pixel proportionally to how much
-        /// of the body's upstream data is observationally grounded.
+        /// Render mode: `elevation` (hillshade), `biome` (palette, default),
+        /// `temperature` (thermal LUT), `moisture` (green-blue LUT),
+        /// `confidence` (source-confidence desaturation), or `plates`
+        /// (tectonic plate coloring).
         #[arg(long, default_value = "biome")]
         mode: String,
         /// Output PNG path. Defaults to `<world>/preview_<mode>.png`.
@@ -933,9 +938,86 @@ fn run_render(args: &RenderArgs) -> Result<(), String> {
                 .map_err(|e| format!("failed to write {}: {}", out.display(), e))?;
             println!("Wrote confidence preview: {}", out.display());
         }
+        "temperature" => {
+            if !wd.skeleton_path().exists() {
+                return Err(format!(
+                    "skeleton.bin missing from {} (run `ymir generate` first)",
+                    args.world.display()
+                ));
+            }
+            if !wd.climate_path().exists() {
+                return Err(format!(
+                    "climate.bin missing from {} (world was generated with --skip-climate)",
+                    args.world.display()
+                ));
+            }
+            let skeleton = load_skeleton(&wd)?;
+            let climate = load_climate(&wd)?;
+            let out = args
+                .output
+                .clone()
+                .unwrap_or_else(|| wd.root.join("preview_temperature.png"));
+            let cfg = ClimateRenderConfig {
+                width: args.width,
+                height: args.height,
+            };
+            let img = render_temperature_mollweide(&skeleton, &climate, &cfg);
+            img.save(&out)
+                .map_err(|e| format!("failed to write {}: {}", out.display(), e))?;
+            println!("Wrote temperature preview: {}", out.display());
+        }
+        "moisture" => {
+            if !wd.skeleton_path().exists() {
+                return Err(format!(
+                    "skeleton.bin missing from {} (run `ymir generate` first)",
+                    args.world.display()
+                ));
+            }
+            if !wd.climate_path().exists() {
+                return Err(format!(
+                    "climate.bin missing from {} (world was generated with --skip-climate)",
+                    args.world.display()
+                ));
+            }
+            let skeleton = load_skeleton(&wd)?;
+            let climate = load_climate(&wd)?;
+            let out = args
+                .output
+                .clone()
+                .unwrap_or_else(|| wd.root.join("preview_moisture.png"));
+            let cfg = ClimateRenderConfig {
+                width: args.width,
+                height: args.height,
+            };
+            let img = render_moisture_mollweide(&skeleton, &climate, &cfg);
+            img.save(&out)
+                .map_err(|e| format!("failed to write {}: {}", out.display(), e))?;
+            println!("Wrote moisture preview: {}", out.display());
+        }
+        "plates" => {
+            if !wd.skeleton_path().exists() {
+                return Err(format!(
+                    "skeleton.bin missing from {} (run `ymir generate` first)",
+                    args.world.display()
+                ));
+            }
+            let skeleton = load_skeleton(&wd)?;
+            let out = args
+                .output
+                .clone()
+                .unwrap_or_else(|| wd.root.join("preview_plates.png"));
+            let cfg = PlatesRenderConfig {
+                width: args.width,
+                height: args.height,
+            };
+            let img = render_plates_mollweide(&skeleton, &cfg);
+            img.save(&out)
+                .map_err(|e| format!("failed to write {}: {}", out.display(), e))?;
+            println!("Wrote plates preview: {}", out.display());
+        }
         other => {
             return Err(format!(
-                "unknown render mode '{other}': expected 'biome', 'elevation', or 'confidence'"
+                "unknown render mode '{other}': expected 'elevation', 'biome', 'temperature', 'moisture', 'confidence', or 'plates'"
             ));
         }
     }

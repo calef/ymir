@@ -1032,13 +1032,15 @@ Render-mode toggle that desaturates tiles whose biome is `Derived` or `Assumed` 
 
 ### REND-05: Per-stage render modes
 - **Crate:** ymir-render + ymir (binary)
-- **Status:** ready
+- **Status:** done
 - **Depends on:** REND-02, CORE-06
 - **Blocked:** no
 - **Model:** sonnet
-- **Assignee:**
+- **Assignee:** agent
 
 Unify the Mollweide outputs (`preview.png`, `preview_biome.png`) behind a single `--render-mode` flag: `elevation` (hillshade), `biome` (palette colors), `temperature` (thermal LUT), `moisture` (green-blue LUT), `confidence` (REND-04), `plates` (tectonic plate coloring). Keep the existing two outputs for backwards compatibility but deprecate them in the CLI help. Tests: each mode produces a non-empty PNG with reasonable color distribution.
+
+**Debrief (2026-04-12):** Bundles a prior agent's partial work (color_maps.rs temperature/moisture LUTs + climate_mollweide.rs renderers) plus completion work. Added `plates_mollweide.rs` with a 16-colour cycling palette keyed off `tile_plate_assignment`. Added `pub mod climate_mollweide` and `pub mod plates_mollweide` to `lib.rs` with full re-exports. Extended `run_render` in `main.rs` to handle all six modes (`elevation`, `biome`, `temperature`, `moisture`, `confidence`, `plates`); temperature/moisture require climate.bin, plates only needs skeleton.bin. Updated CLI help text. Fixed the prior agent's test code which used stale `build_temperature_field`/`build_moisture_field` signatures (now go through `ClimateMap::build`). Final render-mode surface: `ymir render --world PATH --mode elevation|biome|temperature|moisture|confidence|plates [--output PATH] [--width N] [--height N]`. 83 tests pass in ymir-render.
 
 ### GUI-01: Scaffold `ymir-gui` crate
 - **Crate:** ymir-gui (new)
