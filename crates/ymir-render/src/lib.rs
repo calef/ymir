@@ -11,6 +11,7 @@ pub mod detail_renderer;
 pub mod globe_renderer;
 pub mod overlays;
 pub mod projections;
+pub mod regional;
 
 pub use biome_mollweide::{BiomeRenderConfig, render_biome_mollweide};
 pub use biome_palette::biome_color;
@@ -19,3 +20,4 @@ pub use globe_renderer::{
     GlobeRenderConfig, render_skeleton_mollweide, render_skeleton_mollweide_to_path,
 };
 pub use projections::{MapProjection, Mollweide};
+pub use regional::{RegionProjection, RegionalRenderConfig, render_regional_detail};
