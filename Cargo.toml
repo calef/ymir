@@ -44,7 +44,7 @@ publish = false
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-bincode = "1"
+bincode = "3"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
