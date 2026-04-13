@@ -1,0 +1,37 @@
+# Ymir commit message template
+# Opt in locally: git config commit.template .gitmessage
+#
+# Format:
+#   <type>(<scope>): <TASK-ID> - <one-line summary>
+#
+#   <2-4 line body explaining what landed, what tests ship, any gotchas>
+#
+#   Co-Authored-By: Claude <noreply@anthropic.com>   # if AI-assisted
+#
+# ─── Types ────────────────────────────────────────────────────────────────────
+#   feat      New feature or capability
+#   fix       Bug fix
+#   docs      Documentation only
+#   refactor  Code change that is not a feature or fix
+#   perf      Performance improvement
+#   test      Adding or correcting tests
+#   build     Build system / Cargo.toml / dependency changes
+#   ci        CI/CD workflow changes
+#   chore     Everything else (tooling, config, maintenance)
+#
+# ─── Scopes ───────────────────────────────────────────────────────────────────
+#   core | catalog | system | atmosphere | surface | climate | biome |
+#   detail | render | storage    (crate name without the ymir- prefix)
+#   ymir        the binary crate at the repo root
+#   workspace   cross-cutting changes (multiple crates or repo-level config)
+#
+# ─── Breaking changes ─────────────────────────────────────────────────────────
+#   Append ! before the colon: feat(core)!: CORE-12 - rename Sourced trait
+#   release-plz uses this to bump the minor version (pre-1.0) or major (post-1.0).
+#
+# ─── Examples ─────────────────────────────────────────────────────────────────
+#   feat(detail): REGN-06 - HexGrid subdivision
+#   fix(climate): CLIM-03 - clamp albedo at poles
+#   docs(workspace): INFRA-11 - adopt conventional-commits prefix
+#   ci(workspace): INFRA-09 - wire release-plz workflow
+#

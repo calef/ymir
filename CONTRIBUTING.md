@@ -147,10 +147,11 @@ If a task cannot proceed (needs a human decision, external input, or an unresolv
 ## Pull Requests
 
 - Branch from `main`. Keep PRs focused; one task per PR is the norm.
-- Conventional-commit style subjects are welcomed but not required: `feat(surface): add Voronoi plate partition`, `fix(climate): clamp albedo at pole`, `docs: expand CONTRIBUTING`.
+- **PR titles must follow the conventional-commits convention** because this repo uses squash-merge, and the squash commit takes its message from the PR title. release-plz reads squash-commit messages to build the CHANGELOG, so a non-conforming PR title produces a mis-classified or missing changelog entry. Format: `<type>(<scope>): <TASK-ID> - <one-line summary>`. Example: `feat(surface): SURF-07 - Voronoi plate partition`.
 - Reference the task ID in the PR description (e.g. `Implements SURF-04.`). If the PR closes a task, say so explicitly.
 - Fill out the PR template. It prompts for a summary, test plan, and any design-doc sections touched.
 - CI must be green before review. If CI fails on something unrelated to your change, flag it in the PR rather than disabling the check.
+- An advisory `commitlint` CI job checks that individual commit subjects in the PR also follow the convention. It is not a required check (it won't block merge), but please fix any violations before requesting review.
 
 ## Commit Sign-Off (DCO)
 

@@ -33,12 +33,20 @@ All work is tracked in `TASKS.md` at the repo root. Read it before starting work
 6. **Commit the task as a single self-contained commit** before handing back to the orchestrator. This is mandatory — do not leave the tree dirty. Scope the commit to the task's files plus the TASKS.md edits (task block + cascade flips). Message format:
 
    ```
-   <TASK-ID>: <one-line summary>
+   <type>(<scope>): <TASK-ID> - <one-line summary>
 
-   <2-4 line summary of what landed, what shipped as tests, any gotchas>
+   <2-4 line body>
 
    Co-Authored-By: Claude <noreply@anthropic.com>
    ```
+
+   **Allowed types:** `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`
+
+   **Scope:** crate name without the `ymir-` prefix (`core`, `catalog`, `system`, `atmosphere`, `surface`, `climate`, `biome`, `detail`, `render`, `storage`), or `ymir` for the binary, or `workspace` for cross-cutting changes.
+
+   **Example:** `feat(detail): REGN-06 - HexGrid subdivision`
+
+   **Breaking changes** get `!` before the colon: `feat(core)!: CORE-12 - rename Sourced trait`. release-plz uses this to bump the minor version pre-1.0 (or major post-1.0).
 
    Stage files explicitly (`git add path/to/file ...`) rather than `git add -A` so unrelated debris doesn't ride along. If a pre-commit hook fails, fix the underlying issue and create a new commit — do **not** `--amend` or `--no-verify`.
 

@@ -1,0 +1,20 @@
+name: commitlint
+
+# Advisory only — not wired to branch protection required checks.
+# See INFRA-08 for branch protection configuration when the repo goes public.
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  commitlint:
+    name: commitlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: wagoid/commitlint-github-action@v6
+        with:
+          configFile: commitlint.config.js

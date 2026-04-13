@@ -673,7 +673,7 @@ Gotchas: aarch64-unknown-linux-gnu cross-compiles on x86_64 Linux runners via th
 
 ### INFRA-11: Adopt conventional-commits prefix in commit messages
 - **Crate:** repo root
-- **Status:** ready
+- **Status:** done
 - **Depends on:** (none)
 - **Blocked:** no
 - **Model:** sonnet
@@ -700,6 +700,8 @@ Steps:
 5. Do NOT retrofit old commits. History stays as-is; the convention applies from this task forward.
 
 Gotchas: the PR title also matters if you squash-merge, because the squash commit uses the PR title as its message. release-plz reads squash-commit messages, so PR titles must follow the convention too. Update the PR template (if one exists) to say so, or add a line to CONTRIBUTING.md.
+
+Updated CLAUDE.md commit-format block with the new `<type>(<scope>): <TASK-ID> - <summary>` template, including the full allowed-types list, scope table, example, and breaking-change `!` convention. Added `.gitmessage` as an opt-in commit template and `commitlint.config.js` with the 9-type allow list and a subject-pattern rule enforcing the `TASK-ID - ` prefix. Wired the advisory `commitlint` job in `.github/workflows/commitlint.yml` (PR-only, not added to branch protection). Added a note to CONTRIBUTING.md's Pull Requests section clarifying that PR titles must follow the convention because squash-merge uses them as commit messages. INFRA-09 remains `pending` until INFRA-08 also lands.
 
 ---
 
