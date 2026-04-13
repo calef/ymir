@@ -2,7 +2,7 @@
 
 Ymir, a causal star-to-surface procedural planet generator.
 
-[![CI](https://github.com/TODO/ymir/actions/workflows/ci.yml/badge.svg)](https://github.com/TODO/ymir/actions/workflows/ci.yml)
+[![CI](https://github.com/calef/ymir/actions/workflows/ci.yml/badge.svg)](https://github.com/calef/ymir/actions/workflows/ci.yml)
 [![MSRV](https://img.shields.io/badge/rust-1.88%2B-blue.svg)](rust-toolchain.toml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 <!-- TODO: crates.io badges once published. Publishing is gated on pushing the repo to a real GitHub -->
@@ -37,7 +37,7 @@ Every stage reads only from upstream stages, never sideways. That property makes
 
 ```bash
 # Clone and install
-git clone <repo-url> ymir
+git clone https://github.com/calef/ymir ymir
 cd ymir
 cargo install --path .
 

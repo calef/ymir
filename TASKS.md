@@ -609,11 +609,11 @@ NOTE: `deny.toml` uses v2 schema; allow list is MIT / Apache-2.0 / BSD-2-Clause 
 
 ### INFRA-08: Publish repository on GitHub
 - **Crate:** repo root
-- **Status:** ready
+- **Status:** done
 - **Depends on:** INFRA-02, INFRA-06, INFRA-07
 - **Blocked:** no
 - **Model:** sonnet
-- **Assignee:**
+- **Assignee:** agent
 
 Push the local repo to a new GitHub repository so CI actually runs, Dependabot PRs start firing, and collaborators can PR. Until this lands all of INFRA-02/06/07 are theoretical.
 
@@ -630,9 +630,11 @@ Steps:
 
 Gotchas: this is the first operation that exposes the repo publicly. Re-run the secret sweep right before `git push`, not just at task start — the working tree changes as other tasks land. If the CI workflow fails on first push, do not bypass with `push --force`; diagnose the failure and open a follow-up task.
 
+NOTE: Repo created as `calef/ymir` (public) via `gh repo create`. Secret sweep clean before push. CI triggered immediately on first push (CI and Dependabot Updates runs visible within seconds). Branch protection on `main`: require linear history, disallow force-push, require status checks (test, clippy, fmt, docs, deny). Merge settings: squash + rebase only, no merge commits, auto-merge enabled, branch auto-delete on merge. Topics set: rust, simulation, procedural-generation, astronomy, planet-generation. README updated: CI badge and clone URL now point to `https://github.com/calef/ymir`. Note: `cargo fmt --check` and `cargo doc` have pre-existing failures in other agents' files (tests/provenance_dump.rs, crates/ymir-gui) that are outside this task's scope.
+
 ### INFRA-09: Adopt release-plz for automated versioning and CHANGELOG
 - **Crate:** repo root
-- **Status:** pending
+- **Status:** ready
 - **Depends on:** INFRA-08, INFRA-11
 - **Blocked:** no
 - **Model:** sonnet
@@ -1006,11 +1008,11 @@ Debrief: New files: `crates/ymir-core/src/provenance.rs` (ProvenanceReport / Sta
 
 ### CORE-08: Override CLI authoring helpers
 - **Crate:** ymir (binary)
-- **Status:** ready
+- **Status:** in-progress
 - **Depends on:** CORE-06, CORE-07
 - **Blocked:** no
 - **Model:** sonnet
-- **Assignee:**
+- **Assignee:** agent
 
 `ymir override add --world PATH --field orbital_body.radius --value 1.073 --unit R_earth --reference "Gilbert+ 2023" --instrument "TESS"` edits the world's overrides.json without hand-editing JSON. Companion commands: `override remove --field X`, `override list`, `override validate` (checks that `--field` paths resolve to real Sourced fields). After the edit, users still run `ymir regenerate` to propagate. Tests: add, list, remove round-trip; validate rejects unknown field paths.
 
@@ -1036,11 +1038,11 @@ Unify the Mollweide outputs (`preview.png`, `preview_biome.png`) behind a single
 
 ### GUI-01: Scaffold `ymir-gui` crate
 - **Crate:** ymir-gui (new)
-- **Status:** ready
+- **Status:** in-progress
 - **Depends on:** CAT-08, CORE-07
 - **Blocked:** no
 - **Model:** opus
-- **Assignee:**
+- **Assignee:** agent
 
 New crate `crates/ymir-gui` using `egui` (via `eframe`) for the desktop UI. Justification: small dep footprint, runs natively and in wasm, good at data-heavy panels, easy to embed PNG previews. Alternative `iced` rejected for Phase 4 because its layout model is heavier for data-first UIs. Establish the app skeleton: main window, top menu bar (File → Open World, View → Render Mode, Help), blank central area with a left sidebar (future star browser) and right inspector panel. No interactivity beyond opening a pre-generated world directory. Tests: `cargo check` compiles; headless `cargo test` runs an app-startup smoke test if egui supports one (`egui_kittest` or similar — skip if heavyweight).
 
@@ -1128,11 +1130,11 @@ Integration test: open the fixture catalog, query for a known set of stars (Sol,
 
 ### VALID-08: Provenance dump validation
 - **Crate:** ymir (binary, integration tests)
-- **Status:** ready
+- **Status:** in-progress
 - **Depends on:** CORE-07
 - **Blocked:** no
 - **Model:** sonnet
-- **Assignee:**
+- **Assignee:** agent
 
 Integration test: generate an Earth world with the standard continental_fraction + atmosphere overrides; parse `provenance.json`; assert every field has a well-formed `Source`; count Observed vs Derived vs Assumed per stage and check against a golden histogram. Regenerate with an additional override; re-dump; assert the flipped fields transitioned Derived → Observed.
 
