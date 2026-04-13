@@ -17,11 +17,13 @@
 //! trivial PNG embedding for pre-rendered Mollweide previews. A `wgpu` backend
 //! can replace `glow` later when the Phase-6 3D globe view lands.
 //!
-//! # Scaffold status (GUI-01)
+//! # Status
 //!
-//! This is the initial scaffold. It wires up the window, the three-region
-//! layout, the top menu bar, and the panel traits, but the individual panels
-//! are stubs. GUI-02..08 fill in the real widgets.
+//! GUI-01 scaffolded the window, three-region layout, menu bar, and panel
+//! traits. GUI-02 implemented the star browser ([`star_browser::StarBrowserPanel`])
+//! in the left sidebar with text search, spectral-class toggles, a distance
+//! slider, and a confirmed-HZ-planet checkbox. GUI-03..08 fill in the remaining
+//! widgets.
 //!
 //! # Extensibility points
 //!
@@ -41,11 +43,13 @@
 pub mod app;
 pub mod inspector;
 pub mod panel;
+pub mod star_browser;
 pub mod view;
 pub mod world;
 
 pub use app::{AppState, YmirApp};
 pub use inspector::{InspectorPanel, InspectorTab};
 pub use panel::{Panel, PanelRegion};
+pub use star_browser::{BrowserFilter, StarBrowserPanel};
 pub use view::{RenderMode, ViewMode};
 pub use world::{LoadedWorld, WorldLoadError};

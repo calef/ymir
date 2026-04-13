@@ -1098,7 +1098,7 @@ New crate `crates/ymir-gui` using `egui` (via `eframe`) for the desktop UI. Just
 
 ### GUI-02: Star browser panel
 - **Crate:** ymir-gui
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** GUI-01, CAT-09
 - **Blocked:** no
 - **Model:** sonnet
@@ -1106,9 +1106,11 @@ New crate `crates/ymir-gui` using `egui` (via `eframe`) for the desktop UI. Just
 
 Left sidebar: searchable table over the `Catalog` facade. Columns: name (or Gaia ID), spectral type, distance (pc), T_eff, known planets. Filters: spectral-type multi-select, distance slider, "has confirmed planets" checkbox. Row click selects the star; selected StarContext surfaces in the inspector. Virtualize the table (only render visible rows) so 500k rows perform well. Tests: unit tests for the filter-predicate logic; manual verification for scroll performance.
 
+**Debrief (2026-04-12):** Catalog handle lives on `YmirApp` (not `AppState`) because `Catalog` is not serde-serialisable. Selection is stored as `AppState::selected_star_gaia_id: Option<u64>` so it round-trips through JSON cheaply. `StarBrowserPanel` owns filter state (`BrowserFilter`) and a cached `Vec<StarSummary>` of matching rows. The borrow-checker split: `YmirApp::left_sidebar` calls `star_browser.current_query()` to get the current filter, queries the catalog (sequential borrow), then calls `star_browser.draw(ui, state, Option<Vec<StarSummary>>)` with pre-fetched candidates so catalog and browser are never borrowed simultaneously. Virtual scroll uses `egui::ScrollArea::show_viewport` with a fixed `ROW_HEIGHT = 22px`; only visible rows are rendered. Filter predicates: free-text (name/Gaia-ID), per-class spectral toggles (O-B-A-F-G-K-M + "All" reset), max-distance slider, HZ-planet checkbox. Up/down arrow keys navigate the list and write selection. Inspector Fields tab now renders a `StarSummary` grid when a star is selected. 25 new unit tests cover every filter predicate, `to_catalog_query` delegation, display-name fallback, spectral-label formatting, and `BrowserFilter` serde-via-struct-literal. GUI-03 depends only on GUI-02 and is now ready.
+
 ### GUI-03: System view
 - **Crate:** ymir-gui
-- **Status:** pending
+- **Status:** ready
 - **Depends on:** GUI-02
 - **Blocked:** no
 - **Model:** sonnet

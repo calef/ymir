@@ -7,6 +7,7 @@
 
 use crate::panel::{Panel, PanelRegion};
 use serde::{Deserialize, Serialize};
+use ymir_catalog::StarSummary;
 
 /// Inspector-panel tabs.
 ///
@@ -48,9 +49,15 @@ impl InspectorTab {
 ///
 /// GUI-07 swaps the body out for the real provenance tree; GUI-08 adds the
 /// override form on the [`InspectorTab::Override`] tab.
+///
+/// GUI-02 populates the Fields tab with the currently selected star's
+/// [`StarSummary`] when one is set via [`InspectorPanel::set_selected_star`].
 #[derive(Debug, Default)]
 pub struct InspectorPanel {
     current: InspectorTab,
+    /// The selected star's summary, set by the star browser on row selection.
+    /// `None` when no star is selected.
+    selected_star: Option<StarSummary>,
 }
 
 impl InspectorPanel {
@@ -67,6 +74,65 @@ impl InspectorPanel {
     /// Switches to the given tab.
     pub fn set_tab(&mut self, tab: InspectorTab) {
         self.current = tab;
+    }
+
+    /// Sets (or clears) the selected star displayed in the Fields tab.
+    ///
+    /// Called each frame by [`crate::app::YmirApp`] after the star browser
+    /// updates [`crate::app::AppState::selected_star_gaia_id`]. Passing `None`
+    /// returns the inspector to its "no selection" placeholder.
+    pub fn set_selected_star(&mut self, summary: Option<StarSummary>) {
+        self.selected_star = summary;
+    }
+
+    /// Returns a reference to the currently selected star summary, if any.
+    pub fn selected_star(&self) -> Option<&StarSummary> {
+        self.selected_star.as_ref()
+    }
+}
+
+impl InspectorPanel {
+    /// Render the star fields table for the selected star.
+    fn draw_star_fields(ui: &mut egui::Ui, star: &StarSummary) {
+        let name = star.common_name.as_deref().unwrap_or("(no common name)");
+        ui.heading(name);
+        ui.separator();
+        egui::Grid::new("star_fields_grid")
+            .num_columns(2)
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label("Gaia ID:");
+                ui.monospace(star.gaia_id.to_string());
+                ui.end_row();
+
+                ui.label("Spectral type:");
+                ui.label(format!("{}{}", star.spectral.class, star.spectral.subtype));
+                ui.end_row();
+
+                ui.label("Distance:");
+                ui.label(format!("{:.3} pc", star.distance_pc));
+                ui.end_row();
+
+                ui.label("T_eff:");
+                ui.label(format!("{:.0} K", star.teff_k));
+                ui.end_row();
+
+                ui.label("Luminosity:");
+                ui.label(format!("{:.4} L\u{2609}", star.luminosity_sun));
+                ui.end_row();
+
+                ui.label("RA:");
+                ui.label(format!("{:.6}°", star.ra_deg));
+                ui.end_row();
+
+                ui.label("Dec:");
+                ui.label(format!("{:.6}°", star.dec_deg));
+                ui.end_row();
+
+                ui.label("HZ planet:");
+                ui.label(if star.has_hz_planet { "yes" } else { "no" });
+                ui.end_row();
+            });
     }
 }
 
@@ -91,7 +157,11 @@ impl Panel for InspectorPanel {
         ui.separator();
         match self.current {
             InspectorTab::Fields => {
-                ui.label("No selection. Pick a star from the browser on the left.");
+                if let Some(star) = &self.selected_star {
+                    Self::draw_star_fields(ui, star);
+                } else {
+                    ui.label("No selection. Pick a star from the browser on the left.");
+                }
             }
             InspectorTab::Provenance => {
                 ui.label("Provenance tree lands in GUI-07.");

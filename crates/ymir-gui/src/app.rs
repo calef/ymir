@@ -10,6 +10,7 @@
 
 use crate::inspector::InspectorPanel;
 use crate::panel::Panel;
+use crate::star_browser::StarBrowserPanel;
 use crate::view::{RenderMode, ViewMode};
 use crate::world::LoadedWorld;
 use serde::{Deserialize, Serialize};
@@ -38,6 +39,16 @@ pub struct AppState {
     pub confidence_overlay: bool,
     /// Last opened world directory, used to repopulate File → Recent.
     pub last_world_path: Option<std::path::PathBuf>,
+    /// Gaia source ID of the currently selected star, if any.
+    ///
+    /// Written by the star browser ([`StarBrowserPanel`]) when a row is clicked
+    /// or navigated to. Read by the inspector and by future central-area panels
+    /// (GUI-03+) to know which star to display.
+    ///
+    /// Using the Gaia source ID (a `u64`) rather than a full `StarSummary`
+    /// keeps `AppState` cheaply serde-roundtrippable without pulling catalog
+    /// types into the persistent state blob.
+    pub selected_star_gaia_id: Option<u64>,
 }
 
 /// Root application struct mounted into [`eframe::run_native`].
@@ -52,6 +63,14 @@ pub struct YmirApp {
     pub world: Option<LoadedWorld>,
     /// Inspector panel (right sidebar). Always present.
     pub inspector: InspectorPanel,
+    /// Star browser panel (left sidebar). Always present; renders an empty
+    /// state when no catalog is loaded.
+    pub star_browser: StarBrowserPanel,
+    /// In-memory star catalog. `None` until the user opens a catalog via
+    /// File → Open Catalog (or until GUI-02 wires up the file picker). Held
+    /// here rather than on [`AppState`] because [`ymir_catalog::Catalog`] is
+    /// not serde-serialisable.
+    pub catalog: Option<ymir_catalog::Catalog>,
 }
 
 impl Default for YmirApp {
@@ -60,6 +79,8 @@ impl Default for YmirApp {
             state: AppState::default(),
             world: None,
             inspector: InspectorPanel::new(),
+            star_browser: StarBrowserPanel::new(),
+            catalog: None,
         }
     }
 }
@@ -79,6 +100,8 @@ impl YmirApp {
             state,
             world: None,
             inspector: InspectorPanel::new(),
+            star_browser: StarBrowserPanel::new(),
+            catalog: None,
         }
     }
 
@@ -118,14 +141,51 @@ impl YmirApp {
         });
     }
 
-    /// Renders the left sidebar placeholder. GUI-02 replaces this body.
+    /// Renders the left sidebar star browser.
     fn left_sidebar(&mut self, ctx: &egui::Context) {
+        // Pre-fetch catalog candidates before entering the egui closure so we
+        // can borrow `self.catalog` and `self.star_browser` sequentially rather
+        // than simultaneously inside the closure.
+        //
+        // Candidates are only fetched when the filter has changed since the
+        // last draw; otherwise `None` is passed and the panel keeps its cached
+        // filtered row list.
+        let candidates: Option<Vec<ymir_catalog::StarSummary>> =
+            if self.star_browser.filter_changed() {
+                self.catalog.as_ref().map(|cat| {
+                    let q = self.star_browser.current_query();
+                    cat.list(&q)
+                })
+            } else {
+                // Filter unchanged: don't re-query; panel will keep its cache.
+                None
+            };
+
+        // Update the inspector with the selected star. Borrow catalog before
+        // entering the mutable egui closure.
+        let selected_summary: Option<ymir_catalog::StarSummary> = self
+            .state
+            .selected_star_gaia_id
+            .and_then(|gid| self.catalog.as_ref()?.summary(gid));
+        self.inspector.set_selected_star(selected_summary);
+
+        let catalog_present = self.catalog.is_some();
+
         egui::SidePanel::left("ymir_star_browser")
             .resizable(true)
             .default_width(260.0)
             .show(ctx, |ui| {
                 ui.heading("Star Browser");
-                ui.label("Star list lands in GUI-02.");
+                ui.separator();
+
+                if catalog_present {
+                    self.star_browser.draw(ui, &mut self.state, candidates);
+                } else {
+                    self.star_browser.draw(ui, &mut self.state, None);
+                    ui.separator();
+                    ui.label("No catalog loaded.");
+                    ui.label("Open a catalog via File → Open Catalog.");
+                }
             });
     }
 
