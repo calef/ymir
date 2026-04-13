@@ -1,20 +1,30 @@
 [package]
 name = "ymir-render"
-version = "0.1.0"
-edition = "2024"
-license = "MIT OR Apache-2.0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+authors.workspace = true
 description = "2D map rendering: globe projections, detail views, and overlay compositing"
+documentation = "https://docs.rs/ymir-render"
+keywords = ["simulation", "worldgen", "rendering", "mollweide"]
+categories = ["rendering", "graphics", "simulation"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 image = "0.25"
-ymir-core = { path = "../ymir-core" }
-ymir-surface = { path = "../ymir-surface" }
-ymir-climate = { path = "../ymir-climate" }
-ymir-biome = { path = "../ymir-biome" }
+ymir-core = { path = "../ymir-core", version = "0.1.0" }
+ymir-surface = { path = "../ymir-surface", version = "0.1.0" }
+ymir-climate = { path = "../ymir-climate", version = "0.1.0" }
+ymir-biome = { path = "../ymir-biome", version = "0.1.0" }
+ymir-detail = { path = "../ymir-detail", version = "0.1.0" }
 
 [dev-dependencies]
+serde_json = "1"
 tempfile = "3"
-ymir-atmosphere = { path = "../ymir-atmosphere" }
-ymir-catalog = { path = "../ymir-catalog" }
-ymir-system = { path = "../ymir-system" }
+ymir-atmosphere = { path = "../ymir-atmosphere", version = "0.1.0" }
+ymir-catalog = { path = "../ymir-catalog", version = "0.1.0" }
+ymir-system = { path = "../ymir-system", version = "0.1.0" }
