@@ -607,6 +607,29 @@ Add `deny.toml` for license, advisory, and source auditing. Allow MIT / Apache-2
 
 NOTE: `deny.toml` uses v2 schema; allow list is MIT / Apache-2.0 / BSD-2-Clause / BSD-3-Clause / ISC / Unicode-DFS-2016 / Unicode-3.0 / CC0-1.0 / Zlib / MPL-2.0 (default-deny, no explicit deny list). CI job `deny` uses `EmbarkStudios/cargo-deny-action@v2` and runs `cargo deny check advisories licenses sources bans`. CONTRIBUTING.md Hard Rules updated. Not verified locally (no cargo on PATH); CI is the first verification.
 
+### INFRA-08: Publish repository on GitHub
+- **Crate:** repo root
+- **Status:** ready
+- **Depends on:** INFRA-02, INFRA-06, INFRA-07
+- **Blocked:** no
+- **Model:** sonnet
+- **Assignee:**
+
+Push the local repo to a new GitHub repository so CI actually runs, Dependabot PRs start firing, and collaborators can PR. Until this lands all of INFRA-02/06/07 are theoretical.
+
+Steps:
+
+1. Confirm with the human: repo owner (user or org), repo name (default `ymir`), and visibility (public vs private). The LICENSE, README, CODE_OF_CONDUCT, CONTRIBUTING, SECURITY files already in the tree are shaped for a public OSS project; default to public unless the human says otherwise.
+2. Run `gh auth status`. If not authenticated, stop and ask the human to run `gh auth login` (interactive — the agent cannot complete this step). Document the interactive requirement as a handoff.
+3. Secret sweep before push. `git grep -I -E '(api[_-]?key|secret|token|password|BEGIN .* PRIVATE KEY)' -- :^CHANGELOG.md :^README.md :^CONTRIBUTING.md` and inspect hits. The catalog fetch scripts (`scripts/fetch_gaia_catalog.py`, `scripts/fetch_exoplanet_catalog.py`) talk to anonymous public archives, so they should contain no credentials, but verify.
+4. Create the remote: `gh repo create <owner>/<name> --<public|private> --source=. --remote=origin --description "Causal star-to-surface planet simulation in Rust"`. Do NOT use `--push` on the first create call — push main separately so any failure is easier to diagnose.
+5. `git push -u origin main` and then any additional branches that exist.
+6. Verify: (a) the INFRA-02 CI workflow triggers and either passes or surfaces a real failure (if it fails, open an issue documenting it; do not hotfix on first push); (b) Dependabot registers and queues its first run on the next Monday 06:00 America/Los_Angeles slot; (c) the `deny` CI job runs and passes.
+7. Repo hygiene on first landing: enable branch protection on `main` (require CI green, require PR review, disallow force-push). Add repository topics: `rust`, `simulation`, `procedural-generation`, `astronomy`, `planet-generation`. Set the default branch to `main`. These can be done via `gh` subcommands or the web UI; prefer `gh` so the sequence is replayable.
+8. Update README with the canonical GitHub URL where relevant (clone command, CI badge link, issue-tracker reference). Include a CI badge if the workflow has a well-known name.
+
+Gotchas: this is the first operation that exposes the repo publicly. Re-run the secret sweep right before `git push`, not just at task start — the working tree changes as other tasks land. If the CI workflow fails on first push, do not bypass with `push --force`; diagnose the failure and open a follow-up task.
+
 ---
 
 ## Phase 3: Regional detail
