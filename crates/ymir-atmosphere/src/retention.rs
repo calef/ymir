@@ -184,7 +184,11 @@ pub fn compute_retention(mass_earth: f64, radius_earth: f64, temp_k: f64) -> Ret
 /// Convenience wrapper that feeds an [`OrbitalBody`]'s mass, radius, and
 /// equilibrium temperature into [`compute_retention`].
 pub fn compute_retention_for_body(body: &OrbitalBody) -> RetentionResult {
-    compute_retention(body.mass, body.radius, body.equilibrium_temp)
+    compute_retention(
+        *body.mass.inner(),
+        *body.radius.inner(),
+        *body.equilibrium_temp.inner(),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -351,25 +355,28 @@ mod tests {
 
     #[test]
     fn compute_retention_for_body_matches_direct_call() {
+        use ymir_core::Sourced;
         use ymir_system::orbital_body::{OrbitalBody, PlanetType};
 
+        let d = |v: f64| Sourced::derived(v, "test");
         let body = OrbitalBody {
-            semi_major_axis: 1.0,
-            eccentricity: 0.0167,
-            inclination: 0.0,
-            axial_tilt: 23.4,
-            mass: 1.0,
-            radius: 1.0,
-            density: 5.51,
-            surface_gravity: 9.81,
-            solar_irradiance: 1361.0,
-            equilibrium_temp: 254.0,
-            tidal_locked: false,
-            rotation_period: 24.0,
+            semi_major_axis: d(1.0),
+            eccentricity: d(0.0167),
+            inclination: d(0.0),
+            axial_tilt: d(23.4),
+            mass: d(1.0),
+            radius: d(1.0),
+            density: d(5.51),
+            surface_gravity: d(9.81),
+            solar_irradiance: d(1361.0),
+            equilibrium_temp: d(254.0),
+            tidal_locked: Sourced::derived(false, "test"),
+            rotation_period: d(24.0),
             is_in_hz: true,
             planet_type: PlanetType::Terran,
             name: Some("Earth".to_string()),
             is_known_exoplanet: false,
+            continental_fraction: None,
         };
 
         let via_body = compute_retention_for_body(&body);

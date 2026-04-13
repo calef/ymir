@@ -9,6 +9,7 @@
 
 use crate::markov::{SmoothingConfig, smooth_biomes};
 use crate::palette::{Biome, BiomePalette, palette_for};
+use crate::water_overlay::{WaterOverlayConfig, apply_water_overlay};
 use crate::weight_schema::default_transitions;
 use crate::whittaker::classify;
 use serde::{Deserialize, Serialize};
@@ -18,12 +19,18 @@ use ymir_surface::SkeletonWorld;
 
 /// Configuration for [`BiomeMap::build`].
 ///
-/// Carries the smoothing parameters for the Markov pass that runs after
-/// raw Whittaker classification.
+/// Carries the smoothing parameters for the Markov pass and the water-biome
+/// overlay parameters for the pre-smoothing overlay pass introduced in
+/// `BIOME-05`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct BiomeMapConfig {
     /// Markov smoothing parameters.
     pub smoothing: SmoothingConfig,
+    /// Water-biome overlay parameters (Ocean, CoastalShallow, Wetland,
+    /// AlpineMeadow). Runs between Whittaker classification and Markov
+    /// smoothing. Defaults to an enabled overlay with Earth-calibrated
+    /// thresholds.
+    pub water_overlay: WaterOverlayConfig,
 }
 
 /// Per-tile biome classification covering every tile in the skeleton grid.
@@ -48,7 +55,10 @@ impl BiomeMap {
     /// 1. Pick a palette from `world.atmosphere.class` via [`palette_for`].
     /// 2. Classify each tile with [`classify`] using the tile's temperature
     ///    (Kelvin) and humidity.
-    /// 3. Build a `Vec<Vec<usize>>` neighbor table from
+    /// 3. Apply the water-biome overlay (Ocean, CoastalShallow, Wetland,
+    ///    AlpineMeadow) using skeleton elevation and climate. The overlay
+    ///    is a no-op for non-Earth-like palettes.
+    /// 4. Build a `Vec<Vec<usize>>` neighbor table from
     ///    `world.grid.tiles[i].neighbors` and run [`smooth_biomes`] with
     ///    `cfg.smoothing` and the palette's default transition table.
     ///
@@ -82,7 +92,12 @@ impl BiomeMap {
             })
             .collect();
 
-        // 2. Build neighbor lists for the smoother. GridTile neighbors are
+        // 2. Water-biome overlay: paint Ocean / CoastalShallow / Wetland /
+        //    AlpineMeadow using skeleton elevation and climate. No-op on
+        //    non-Earth-like palettes.
+        apply_water_overlay(&mut per_tile, palette, world, climate, &cfg.water_overlay);
+
+        // 3. Build neighbor lists for the smoother. GridTile neighbors are
         //    already Vec<usize> with valid indices, so we just clone the
         //    structure into the flat shape the smoother expects. This
         //    adapter is intentionally here (not in markov.rs) so that the
@@ -94,7 +109,7 @@ impl BiomeMap {
             .map(|t| t.neighbors.clone())
             .collect();
 
-        // 3. Markov smoothing. NoSurface palettes short-circuit inside
+        // 4. Markov smoothing. NoSurface palettes short-circuit inside
         //    smooth_biomes (only one candidate), so this is safe for every
         //    palette.
         let transitions = default_transitions(palette);
@@ -139,27 +154,33 @@ mod tests {
     use ymir_atmosphere::composition::AtmosphereClass;
     use ymir_atmosphere::retention::Gas;
     use ymir_climate::{ClimateConfig, ClimateMap};
+    use ymir_core::Sourced;
     use ymir_surface::SkeletonWorld;
     use ymir_system::orbital_body::{OrbitalBody, PlanetType};
 
+    fn d(v: f64) -> Sourced<f64> {
+        Sourced::derived(v, "test")
+    }
+
     fn earth_body() -> OrbitalBody {
         OrbitalBody {
-            semi_major_axis: 1.0,
-            eccentricity: 0.0167,
-            inclination: 0.0,
-            axial_tilt: 23.4,
-            mass: 1.0,
-            radius: 1.0,
-            density: 5.51,
-            surface_gravity: 9.81,
-            solar_irradiance: 1361.0,
-            equilibrium_temp: 254.0,
-            tidal_locked: false,
-            rotation_period: 24.0,
+            semi_major_axis: d(1.0),
+            eccentricity: d(0.0167),
+            inclination: d(0.0),
+            axial_tilt: d(23.4),
+            mass: d(1.0),
+            radius: d(1.0),
+            density: d(5.51),
+            surface_gravity: d(9.81),
+            solar_irradiance: d(1361.0),
+            equilibrium_temp: d(254.0),
+            tidal_locked: Sourced::derived(false, "test"),
+            rotation_period: d(24.0),
             is_in_hz: true,
             planet_type: PlanetType::Terran,
             name: Some("Earth".into()),
             is_known_exoplanet: false,
+            continental_fraction: None,
         }
     }
 
@@ -169,13 +190,13 @@ mod tests {
         composition.insert(Gas::O2, 0.21);
         composition.insert(Gas::H2O, 0.01);
         AtmosphereModel {
-            surface_pressure: 1.0,
-            composition,
-            greenhouse_factor: 288.0 / 254.0,
-            effective_surface_temp: 288.0,
-            scale_height: 8.0,
-            moisture_capacity: 1.0,
-            uv_surface_flux: 0.05,
+            surface_pressure: d(1.0),
+            composition: Sourced::derived(composition, "test"),
+            greenhouse_factor: d(288.0 / 254.0),
+            effective_surface_temp: d(288.0),
+            scale_height: d(8.0),
+            moisture_capacity: d(1.0),
+            uv_surface_flux: d(0.05),
             class: AtmosphereClass::NitrogenOxygen,
             retained: vec![Gas::N2, Gas::O2, Gas::H2O],
         }
@@ -281,5 +302,125 @@ mod tests {
             has_open,
             "expected grassland/savanna/desert variant in Earth-like mix, got {present:?}"
         );
+    }
+
+    // ---- BIOME-05 integration tests ---------------------------------------
+
+    fn earth_body_calibrated() -> OrbitalBody {
+        let mut b = earth_body();
+        b.continental_fraction = Some(ymir_core::Sourced::observed(
+            0.29,
+            "ETOPO1",
+            "global topography",
+        ));
+        b
+    }
+
+    fn mars_body() -> OrbitalBody {
+        OrbitalBody {
+            semi_major_axis: d(1.524),
+            eccentricity: d(0.0934),
+            inclination: d(1.85),
+            axial_tilt: d(25.19),
+            mass: d(0.107),
+            radius: d(0.532),
+            density: d(3.93),
+            surface_gravity: d(3.71),
+            solar_irradiance: d(586.2),
+            equilibrium_temp: d(210.0),
+            tidal_locked: Sourced::derived(false, "test"),
+            rotation_period: d(24.62),
+            is_in_hz: false,
+            planet_type: PlanetType::Terran,
+            name: Some("Mars".into()),
+            is_known_exoplanet: false,
+            continental_fraction: Some(Sourced::observed(1.0, "MOLA", "global topography")),
+        }
+    }
+
+    fn mars_atmosphere() -> AtmosphereModel {
+        let mut composition = BTreeMap::new();
+        composition.insert(Gas::CO2, 0.95);
+        composition.insert(Gas::N2, 0.03);
+        composition.insert(Gas::Ar, 0.02);
+        AtmosphereModel {
+            surface_pressure: d(0.006),
+            composition: Sourced::derived(composition, "test"),
+            greenhouse_factor: d(1.02),
+            effective_surface_temp: d(210.0),
+            scale_height: d(11.1),
+            moisture_capacity: d(0.0),
+            uv_surface_flux: d(0.6),
+            class: AtmosphereClass::ThinCO2,
+            retained: vec![Gas::CO2, Gas::N2, Gas::Ar],
+        }
+    }
+
+    #[test]
+    fn earth_calibrated_produces_majority_water_biomes() {
+        // With continental_fraction = 0.29, the skeleton heightmap
+        // calibrates sea level to give ~71% sub-sea-level tiles. The
+        // BIOME-05 overlay turns those into Ocean + CoastalShallow, so the
+        // biome map should report ≥60% water tiles (headroom for the
+        // Markov smoother nibbling a handful of coastal tiles).
+        let world = SkeletonWorld::build(earth_body_calibrated(), earth_atmosphere(), 3, 1);
+        let climate = ClimateMap::build(&world, &ClimateConfig::default());
+        let map = BiomeMap::build(&world, &climate, &BiomeMapConfig::default());
+        let water = map
+            .per_tile
+            .iter()
+            .filter(|b| matches!(b, Biome::Ocean | Biome::CoastalShallow))
+            .count();
+        let frac = water as f64 / map.len() as f64;
+        assert!(
+            frac >= 0.60,
+            "Earth @ seed 1 should have ≥60% Ocean+CoastalShallow biomes, got {frac:.3} \
+             ({water}/{}); histogram: {:?}",
+            map.len(),
+            map.histogram(),
+        );
+    }
+
+    #[test]
+    fn mars_produces_no_water_biomes() {
+        let world = SkeletonWorld::build(mars_body(), mars_atmosphere(), 3, 1);
+        let climate = ClimateMap::build(&world, &ClimateConfig::default());
+        let map = BiomeMap::build(&world, &climate, &BiomeMapConfig::default());
+        for (i, b) in map.per_tile.iter().enumerate() {
+            assert!(
+                !matches!(
+                    b,
+                    Biome::Ocean | Biome::CoastalShallow | Biome::Wetland | Biome::AlpineMeadow
+                ),
+                "Mars tile {i} got water/alpine biome {b:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn water_overlay_can_be_disabled_via_config() {
+        // With the overlay disabled, no Ocean / CoastalShallow should
+        // appear even on a heavily sub-sea-level Earth.
+        let world = SkeletonWorld::build(earth_body_calibrated(), earth_atmosphere(), 3, 1);
+        let climate = ClimateMap::build(&world, &ClimateConfig::default());
+        let cfg = BiomeMapConfig {
+            water_overlay: WaterOverlayConfig {
+                enabled: false,
+                ..WaterOverlayConfig::default()
+            },
+            ..BiomeMapConfig::default()
+        };
+        let map = BiomeMap::build(&world, &climate, &cfg);
+        let water = map
+            .per_tile
+            .iter()
+            .filter(|b| {
+                matches!(
+                    b,
+                    Biome::Ocean | Biome::CoastalShallow | Biome::Wetland | Biome::AlpineMeadow
+                )
+            })
+            .count();
+        assert_eq!(water, 0, "disabled overlay still produced water biomes");
     }
 }

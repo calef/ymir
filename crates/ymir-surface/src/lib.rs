@@ -12,7 +12,7 @@ pub mod tectonics;
 
 pub use heightmap::{ElevationMap, HeightmapConfig, generate_heightmap};
 pub use noise::SphericalFbm;
-pub use skeleton::SkeletonWorld;
+pub use skeleton::{PlateType, SkeletonTile, SkeletonWorld};
 pub use tectonics::{
     BoundaryType, Plate, PlateBoundary, TectonicConfig, TectonicData, generate_tectonics,
 };

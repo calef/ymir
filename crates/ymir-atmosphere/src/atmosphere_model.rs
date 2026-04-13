@@ -11,11 +11,16 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use ymir_catalog::star_context::StarContext;
+use ymir_core::Sourced;
 use ymir_system::orbital_body::OrbitalBody;
 
 use crate::composition::{AtmosphereClass, derive_composition};
 use crate::greenhouse::{greenhouse_factor, surface_temperature};
 use crate::retention::{Gas, compute_retention_for_body};
+
+/// Stage name written into [`ymir_core::Source::Derived`] for atmosphere
+/// fields populated by [`AtmosphereModel::derive`].
+const STAGE: &str = "atmosphere";
 
 /// Earth's surface gravity in m/s^2, used to normalize other bodies.
 const EARTH_SURFACE_GRAVITY: f64 = 9.81;
@@ -33,22 +38,27 @@ const MOISTURE_CAP: f64 = 100.0;
 
 /// A complete atmospheric characterization, produced by
 /// [`AtmosphereModel::derive`].
+///
+/// Every overridable scalar is wrapped in [`Sourced<T>`] so CORE-07
+/// provenance reports and REND-04 confidence overlays can classify per-field
+/// origins. The discrete classification fields (`class`, `retained`) stay
+/// plain because they are fully determined by the `composition` map.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AtmosphereModel {
     /// Surface pressure, bar.
-    pub surface_pressure: f64,
+    pub surface_pressure: Sourced<f64>,
     /// Composition as mole fractions, summing to ~1.0.
-    pub composition: BTreeMap<Gas, f64>,
+    pub composition: Sourced<BTreeMap<Gas, f64>>,
     /// Multiplicative greenhouse temperature factor.
-    pub greenhouse_factor: f64,
+    pub greenhouse_factor: Sourced<f64>,
     /// Effective surface temperature after greenhouse, K.
-    pub effective_surface_temp: f64,
+    pub effective_surface_temp: Sourced<f64>,
     /// Pressure scale height, km.
-    pub scale_height: f64,
+    pub scale_height: Sourced<f64>,
     /// Relative moisture capacity (Earth = 1.0).
-    pub moisture_capacity: f64,
+    pub moisture_capacity: Sourced<f64>,
     /// Fraction of stellar UV reaching the surface, 0-1.
-    pub uv_surface_flux: f64,
+    pub uv_surface_flux: Sourced<f64>,
     /// Coarse classification used by downstream stages.
     pub class: AtmosphereClass,
     /// Gas species retained over geological time.
@@ -67,26 +77,29 @@ impl AtmosphereModel {
         let retained = retention.retained.clone();
 
         let (composition, surface_pressure, class) =
-            derive_composition(body, &retained, star.metallicity, enable_biology);
+            derive_composition(body, &retained, *star.metallicity.inner(), enable_biology);
 
         let gh = greenhouse_factor(&composition, surface_pressure);
-        let effective_surface_temp = surface_temperature(body.equilibrium_temp, gh);
+        let effective_surface_temp = surface_temperature(*body.equilibrium_temp.inner(), gh);
 
-        let scale_height =
-            compute_scale_height(&composition, effective_surface_temp, body.surface_gravity);
+        let scale_height = compute_scale_height(
+            &composition,
+            effective_surface_temp,
+            *body.surface_gravity.inner(),
+        );
 
         let moisture_capacity = compute_moisture_capacity(surface_pressure, effective_surface_temp);
 
         let uv_surface_flux = compute_uv_surface_flux(class, surface_pressure);
 
         AtmosphereModel {
-            surface_pressure,
-            composition,
-            greenhouse_factor: gh,
-            effective_surface_temp,
-            scale_height,
-            moisture_capacity,
-            uv_surface_flux,
+            surface_pressure: Sourced::derived(surface_pressure, STAGE),
+            composition: Sourced::derived(composition, STAGE),
+            greenhouse_factor: Sourced::derived(gh, STAGE),
+            effective_surface_temp: Sourced::derived(effective_surface_temp, STAGE),
+            scale_height: Sourced::derived(scale_height, STAGE),
+            moisture_capacity: Sourced::derived(moisture_capacity, STAGE),
+            uv_surface_flux: Sourced::derived(uv_surface_flux, STAGE),
             class,
             retained,
         }
@@ -186,45 +199,51 @@ mod tests {
         )
     }
 
+    fn d(v: f64) -> Sourced<f64> {
+        Sourced::derived(v, "test")
+    }
+
     fn earth() -> OrbitalBody {
         OrbitalBody {
-            semi_major_axis: 1.0,
-            eccentricity: 0.0167,
-            inclination: 0.0,
-            axial_tilt: 23.4,
-            mass: 1.0,
-            radius: 1.0,
-            density: 5.51,
-            surface_gravity: 9.81,
-            solar_irradiance: 1361.0,
-            equilibrium_temp: 254.0,
-            tidal_locked: false,
-            rotation_period: 24.0,
+            semi_major_axis: d(1.0),
+            eccentricity: d(0.0167),
+            inclination: d(0.0),
+            axial_tilt: d(23.4),
+            mass: d(1.0),
+            radius: d(1.0),
+            density: d(5.51),
+            surface_gravity: d(9.81),
+            solar_irradiance: d(1361.0),
+            equilibrium_temp: d(254.0),
+            tidal_locked: Sourced::derived(false, "test"),
+            rotation_period: d(24.0),
             is_in_hz: true,
             planet_type: PlanetType::Terran,
             name: Some("Earth".to_string()),
             is_known_exoplanet: false,
+            continental_fraction: None,
         }
     }
 
     fn mars() -> OrbitalBody {
         OrbitalBody {
-            semi_major_axis: 1.524,
-            eccentricity: 0.0934,
-            inclination: 1.85,
-            axial_tilt: 25.2,
-            mass: 0.107,
-            radius: 0.532,
-            density: 3.93,
-            surface_gravity: 3.71,
-            solar_irradiance: 586.0,
-            equilibrium_temp: 210.0,
-            tidal_locked: false,
-            rotation_period: 24.6,
+            semi_major_axis: d(1.524),
+            eccentricity: d(0.0934),
+            inclination: d(1.85),
+            axial_tilt: d(25.2),
+            mass: d(0.107),
+            radius: d(0.532),
+            density: d(3.93),
+            surface_gravity: d(3.71),
+            solar_irradiance: d(586.0),
+            equilibrium_temp: d(210.0),
+            tidal_locked: Sourced::derived(false, "test"),
+            rotation_period: d(24.6),
             is_in_hz: false,
             planet_type: PlanetType::Terran,
             name: Some("Mars".to_string()),
             is_known_exoplanet: false,
+            continental_fraction: None,
         }
     }
 
@@ -232,36 +251,36 @@ mod tests {
     fn earth_derive_within_10k_of_288() {
         let atmo = AtmosphereModel::derive(&earth(), &sun(), true);
         assert_eq!(atmo.class, AtmosphereClass::NitrogenOxygen);
+        let t = *atmo.effective_surface_temp.inner();
         assert!(
-            (atmo.effective_surface_temp - 288.0).abs() < 10.0,
-            "Earth effective surface temp should be within 10K of 288K, got {}",
-            atmo.effective_surface_temp
+            (t - 288.0).abs() < 10.0,
+            "Earth effective surface temp should be within 10K of 288K, got {t}"
         );
         // Scale height should be plausible (~8 km).
+        let sh = *atmo.scale_height.inner();
         assert!(
-            atmo.scale_height > 6.0 && atmo.scale_height < 12.0,
-            "Earth scale height should be near 8 km, got {}",
-            atmo.scale_height
+            sh > 6.0 && sh < 12.0,
+            "Earth scale height should be near 8 km, got {sh}"
         );
         // Moisture capacity should be near 1 (Earth reference).
+        let mc = *atmo.moisture_capacity.inner();
         assert!(
-            (atmo.moisture_capacity - 1.0).abs() < 0.3,
-            "Earth moisture capacity should be near 1.0, got {}",
-            atmo.moisture_capacity
+            (mc - 1.0).abs() < 0.3,
+            "Earth moisture capacity should be near 1.0, got {mc}"
         );
     }
 
     #[test]
     fn mars_derive_below_270k() {
         let atmo = AtmosphereModel::derive(&mars(), &sun(), false);
+        let t = *atmo.effective_surface_temp.inner();
         assert!(
-            atmo.effective_surface_temp < 270.0,
-            "Mars effective surface temp should be below 270 K, got {}",
-            atmo.effective_surface_temp
+            t < 270.0,
+            "Mars effective surface temp should be below 270 K, got {t}"
         );
         assert_eq!(atmo.class, AtmosphereClass::ThinCO2);
         // Mars surface pressure ~0.006 bar, extremely thin.
-        assert!(atmo.surface_pressure < 0.1);
+        assert!(*atmo.surface_pressure.inner() < 0.1);
     }
 
     #[test]
@@ -269,17 +288,37 @@ mod tests {
         let atmo = AtmosphereModel::derive(&earth(), &sun(), true);
         let json = serde_json::to_string(&atmo).expect("serialize");
         let back: AtmosphereModel = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(atmo.surface_pressure, back.surface_pressure);
-        assert_eq!(atmo.greenhouse_factor, back.greenhouse_factor);
-        assert_eq!(atmo.effective_surface_temp, back.effective_surface_temp);
-        assert_eq!(atmo.scale_height, back.scale_height);
-        assert_eq!(atmo.moisture_capacity, back.moisture_capacity);
-        assert_eq!(atmo.uv_surface_flux, back.uv_surface_flux);
+        assert_eq!(
+            *atmo.surface_pressure.inner(),
+            *back.surface_pressure.inner()
+        );
+        assert_eq!(
+            *atmo.greenhouse_factor.inner(),
+            *back.greenhouse_factor.inner()
+        );
+        assert_eq!(
+            *atmo.effective_surface_temp.inner(),
+            *back.effective_surface_temp.inner()
+        );
+        assert_eq!(*atmo.scale_height.inner(), *back.scale_height.inner());
+        assert_eq!(
+            *atmo.moisture_capacity.inner(),
+            *back.moisture_capacity.inner()
+        );
+        assert_eq!(
+            *atmo.uv_surface_flux.inner(),
+            *back.uv_surface_flux.inner()
+        );
         assert_eq!(atmo.class, back.class);
         assert_eq!(atmo.retained, back.retained);
-        assert_eq!(atmo.composition.len(), back.composition.len());
-        for (gas, frac) in &atmo.composition {
-            let round = back.composition.get(gas).copied().unwrap_or(f64::NAN);
+        assert_eq!(atmo.composition.inner().len(), back.composition.inner().len());
+        for (gas, frac) in atmo.composition.inner() {
+            let round = back
+                .composition
+                .inner()
+                .get(gas)
+                .copied()
+                .unwrap_or(f64::NAN);
             assert!((round - frac).abs() < 1e-12);
         }
     }
@@ -288,28 +327,45 @@ mod tests {
     fn no_atmosphere_body_has_zero_scale_height() {
         // Tiny moon-like body that retains nothing.
         let body = OrbitalBody {
-            semi_major_axis: 1.0,
-            eccentricity: 0.0,
-            inclination: 0.0,
-            axial_tilt: 0.0,
-            mass: 0.01,
-            radius: 0.2,
-            density: 3.0,
-            surface_gravity: 1.6,
-            solar_irradiance: 1361.0,
-            equilibrium_temp: 254.0,
-            tidal_locked: false,
-            rotation_period: 24.0,
+            semi_major_axis: d(1.0),
+            eccentricity: d(0.0),
+            inclination: d(0.0),
+            axial_tilt: d(0.0),
+            mass: d(0.01),
+            radius: d(0.2),
+            density: d(3.0),
+            surface_gravity: d(1.6),
+            solar_irradiance: d(1361.0),
+            equilibrium_temp: d(254.0),
+            tidal_locked: Sourced::derived(false, "test"),
+            rotation_period: d(24.0),
             is_in_hz: true,
             planet_type: PlanetType::Terran,
             name: None,
             is_known_exoplanet: false,
+            continental_fraction: None,
         };
         let atmo = AtmosphereModel::derive(&body, &sun(), true);
         assert_eq!(atmo.class, AtmosphereClass::None);
-        assert_eq!(atmo.surface_pressure, 0.0);
-        assert_eq!(atmo.scale_height, 0.0);
-        assert_eq!(atmo.moisture_capacity, 0.0);
-        assert_eq!(atmo.uv_surface_flux, 1.0);
+        assert_eq!(*atmo.surface_pressure.inner(), 0.0);
+        assert_eq!(*atmo.scale_height.inner(), 0.0);
+        assert_eq!(*atmo.moisture_capacity.inner(), 0.0);
+        assert_eq!(*atmo.uv_surface_flux.inner(), 1.0);
+    }
+
+    // ------------------------------------------------------------------
+    // CORE-06 per-field provenance tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn core06_derive_tags_every_scalar_derived() {
+        let atmo = AtmosphereModel::derive(&earth(), &sun(), true);
+        assert!(atmo.surface_pressure.is_derived());
+        assert!(atmo.composition.is_derived());
+        assert!(atmo.greenhouse_factor.is_derived());
+        assert!(atmo.effective_surface_temp.is_derived());
+        assert!(atmo.scale_height.is_derived());
+        assert!(atmo.moisture_capacity.is_derived());
+        assert!(atmo.uv_surface_flux.is_derived());
     }
 }

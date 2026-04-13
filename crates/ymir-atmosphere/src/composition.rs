@@ -72,12 +72,12 @@ pub fn derive_composition(
 
     // No atmosphere: empty retention set, or body too small to hold onto
     // anything over geological time.
-    if retained.is_empty() || body.radius < 0.3 {
+    if retained.is_empty() || *body.radius.inner() < 0.3 {
         return (BTreeMap::new(), 0.0, AtmosphereClass::None);
     }
 
     // Gas giant: large radius, still retains H2.
-    if body.radius >= 4.0 && retains(Gas::H2) {
+    if *body.radius.inner() >= 4.0 && retains(Gas::H2) {
         let mut comp = BTreeMap::new();
         comp.insert(Gas::H2, 0.96);
         comp.insert(Gas::He, 0.04);
@@ -86,7 +86,7 @@ pub fn derive_composition(
     }
 
     // Super-Earth / sub-Neptune with an H2/He envelope.
-    if body.radius >= 2.0 && retains(Gas::H2) {
+    if *body.radius.inner() >= 2.0 && retains(Gas::H2) {
         let mut comp = BTreeMap::new();
         comp.insert(Gas::H2, 0.50);
         comp.insert(Gas::He, 0.10);
@@ -116,7 +116,7 @@ pub fn derive_composition(
 
     // CO2-dominated atmospheres (Mars-like or Venus-like).
     if retains(Gas::CO2) {
-        if body.mass > 0.5 {
+        if *body.mass.inner() > 0.5 {
             // Venus-like thick CO2.
             let mut comp = BTreeMap::new();
             comp.insert(Gas::CO2, 0.95);
@@ -125,7 +125,7 @@ pub fn derive_composition(
             comp.insert(Gas::H2O, 0.003);
             normalize(&mut comp);
             // Pressure scales with mass and metallicity; cap at 100 bar.
-            let raw = 10.0 * body.mass * metal_mult;
+            let raw = 10.0 * *body.mass.inner() * metal_mult;
             let pressure = raw.min(100.0);
             return (comp, pressure, AtmosphereClass::ThickCO2);
         } else {
@@ -135,7 +135,7 @@ pub fn derive_composition(
             comp.insert(Gas::N2, 0.03);
             comp.insert(Gas::Ar, 0.02);
             normalize(&mut comp);
-            let pressure = 0.006 * body.mass * metal_mult;
+            let pressure = 0.006 * *body.mass.inner() * metal_mult;
             return (comp, pressure, AtmosphereClass::ThinCO2);
         }
     }
@@ -188,7 +188,12 @@ fn best_class_for(comp: &BTreeMap<Gas, f64>) -> AtmosphereClass {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ymir_core::Sourced;
     use ymir_system::orbital_body::{OrbitalBody, PlanetType};
+
+    fn d(v: f64) -> Sourced<f64> {
+        Sourced::derived(v, "test")
+    }
 
     fn body_with(
         mass: f64,
@@ -198,22 +203,23 @@ mod tests {
         planet_type: PlanetType,
     ) -> OrbitalBody {
         OrbitalBody {
-            semi_major_axis: 1.0,
-            eccentricity: 0.0,
-            inclination: 0.0,
-            axial_tilt: 0.0,
-            mass,
-            radius,
-            density: 5.51,
-            surface_gravity: 9.81,
-            solar_irradiance: 1361.0,
-            equilibrium_temp,
-            tidal_locked: false,
-            rotation_period: 24.0,
+            semi_major_axis: d(1.0),
+            eccentricity: d(0.0),
+            inclination: d(0.0),
+            axial_tilt: d(0.0),
+            mass: d(mass),
+            radius: d(radius),
+            density: d(5.51),
+            surface_gravity: d(9.81),
+            solar_irradiance: d(1361.0),
+            equilibrium_temp: d(equilibrium_temp),
+            tidal_locked: Sourced::derived(false, "test"),
+            rotation_period: d(24.0),
             is_in_hz,
             planet_type,
             name: None,
             is_known_exoplanet: false,
+            continental_fraction: None,
         }
     }
 

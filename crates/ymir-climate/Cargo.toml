@@ -1,16 +1,24 @@
 [package]
 name = "ymir-climate"
-version = "0.1.0"
-edition = "2024"
-license = "MIT OR Apache-2.0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+authors.workspace = true
 description = "Global climate simulation: temperature, moisture, and wind field computation"
+documentation = "https://docs.rs/ymir-climate"
+keywords = ["simulation", "worldgen", "climate", "weather"]
+categories = ["simulation", "science"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-ymir-core = { path = "../ymir-core" }
-ymir-surface = { path = "../ymir-surface" }
-ymir-atmosphere = { path = "../ymir-atmosphere" }
+ymir-core = { path = "../ymir-core", version = "0.1.0" }
+ymir-surface = { path = "../ymir-surface", version = "0.1.0" }
+ymir-atmosphere = { path = "../ymir-atmosphere", version = "0.1.0" }
 
 [dev-dependencies]
-ymir-system = { path = "../ymir-system" }
+ymir-system = { path = "../ymir-system", version = "0.1.0" }
 bincode = "1"

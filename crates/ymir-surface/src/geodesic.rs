@@ -459,8 +459,7 @@ mod tests {
             let pent_count = grid.tiles.iter().filter(|t| t.neighbors.len() == 5).count();
             assert_eq!(
                 pent_count, 12,
-                "Level {}: expected 12 pentagonal tiles, got {}",
-                level, pent_count
+                "Level {level}: expected 12 pentagonal tiles, got {pent_count}"
             );
         }
     }
@@ -514,17 +513,13 @@ mod tests {
             let (lat2, lon2) = xyz_to_latlon(xyz);
             assert!(
                 (lat - lat2).abs() < 1e-10,
-                "Latitude roundtrip failed: {} -> {}",
-                lat,
-                lat2
+                "Latitude roundtrip failed: {lat} -> {lat2}"
             );
             // Handle wraparound at poles where longitude is degenerate
             if lat.abs() < 89.99 {
                 assert!(
                     (lon - lon2).abs() < 1e-10,
-                    "Longitude roundtrip failed: {} -> {}",
-                    lon,
-                    lon2
+                    "Longitude roundtrip failed: {lon} -> {lon2}"
                 );
             }
         }
@@ -618,9 +613,7 @@ mod tests {
         let n = grid.tiles.len() as f64;
         assert!(
             (sum - n).abs() / n < 0.01,
-            "Area sum {} should be close to tile count {}",
-            sum,
-            n
+            "Area sum {sum} should be close to tile count {n}"
         );
     }
 }

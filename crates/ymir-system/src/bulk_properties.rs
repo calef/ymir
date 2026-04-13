@@ -2,11 +2,15 @@
 //! class from orbital parameters and stellar metallicity.
 
 use ymir_catalog::star_context::StarContext;
-use ymir_core::WorldRng;
+use ymir_core::{Sourced, WorldRng};
 
 use crate::orbital_body::{OrbitalBody, PlanetType};
 use crate::placement::PlacedPlanet;
 use crate::tidal::{is_tidally_locked, orbital_period_years};
+
+/// Stage name written into [`ymir_core::Source::Derived`] for all fields
+/// populated by [`derive_body`].
+const STAGE: &str = "planetary_system";
 
 // ---------------------------------------------------------------------------
 // Physical constants
@@ -161,7 +165,7 @@ pub fn derive_body(
     let density = density_gcc(mass, radius);
     let gravity = surface_gravity_ms2(mass, radius);
 
-    let irradiance = solar_irradiance(star.luminosity, placed.semi_major_axis);
+    let irradiance = solar_irradiance(*star.luminosity.inner(), placed.semi_major_axis);
     let t_eq = equilibrium_temperature(irradiance, DEFAULT_BOND_ALBEDO);
 
     // Eccentricity: Rayleigh(sigma = 0.08). Clamp to [0, 0.95).
@@ -171,35 +175,36 @@ pub fn derive_body(
     // Axial tilt (degrees): uniform in [0, 45].
     let axial_tilt = body_rng.next_range(0.0, 45.0);
 
-    let locked = is_tidally_locked(placed.semi_major_axis, star.mass, star.age);
+    let locked = is_tidally_locked(placed.semi_major_axis, *star.mass.inner(), *star.age.inner());
     let rotation_period = if locked {
         // Orbital period in hours (1 year ~ 8766 h).
-        orbital_period_years(placed.semi_major_axis, star.mass) * 365.25 * 24.0
+        orbital_period_years(placed.semi_major_axis, *star.mass.inner()) * 365.25 * 24.0
     } else {
         24.0
     };
 
-    let is_in_hz =
-        placed.semi_major_axis >= star.hz_inner && placed.semi_major_axis <= star.hz_outer;
+    let is_in_hz = placed.semi_major_axis >= *star.hz_inner.inner()
+        && placed.semi_major_axis <= *star.hz_outer.inner();
     let planet_type = classify_planet(radius, mass);
 
     OrbitalBody {
-        semi_major_axis: placed.semi_major_axis,
-        eccentricity,
-        inclination,
-        axial_tilt,
-        mass,
-        radius,
-        density,
-        surface_gravity: gravity,
-        solar_irradiance: irradiance,
-        equilibrium_temp: t_eq,
-        tidal_locked: locked,
-        rotation_period,
+        semi_major_axis: Sourced::derived(placed.semi_major_axis, STAGE),
+        eccentricity: Sourced::derived(eccentricity, STAGE),
+        inclination: Sourced::derived(inclination, STAGE),
+        axial_tilt: Sourced::derived(axial_tilt, STAGE),
+        mass: Sourced::derived(mass, STAGE),
+        radius: Sourced::derived(radius, STAGE),
+        density: Sourced::derived(density, STAGE),
+        surface_gravity: Sourced::derived(gravity, STAGE),
+        solar_irradiance: Sourced::derived(irradiance, STAGE),
+        equilibrium_temp: Sourced::derived(t_eq, STAGE),
+        tidal_locked: Sourced::derived(locked, STAGE),
+        rotation_period: Sourced::derived(rotation_period, STAGE),
         is_in_hz,
         planet_type,
         name: placed.name.clone(),
         is_known_exoplanet: placed.is_known,
+        continental_fraction: None,
     }
 }
 
@@ -332,17 +337,17 @@ mod tests {
         let mut rng = WorldRng::new(7);
         let body = derive_body(&placed, &star, &mut rng, 0);
 
-        assert_eq!(body.semi_major_axis, 1.0);
-        assert_eq!(body.radius, 1.0);
-        assert!((body.mass - 1.0).abs() < 1e-6);
-        assert!((body.density - 5.51).abs() < 0.1);
-        assert!((body.surface_gravity - 9.82).abs() < 0.05);
-        assert!((body.solar_irradiance - 1361.0).abs() < 5.0);
-        assert!((body.equilibrium_temp - 254.0).abs() < 3.0);
-        assert!(body.eccentricity >= 0.0 && body.eccentricity < 1.0);
-        assert!(body.inclination >= 0.0);
-        assert!(body.axial_tilt >= 0.0 && body.axial_tilt < 45.0);
-        assert!(!body.tidal_locked);
+        assert_eq!(*body.semi_major_axis.inner(), 1.0);
+        assert_eq!(*body.radius.inner(), 1.0);
+        assert!((*body.mass.inner() - 1.0).abs() < 1e-6);
+        assert!((*body.density.inner() - 5.51).abs() < 0.1);
+        assert!((*body.surface_gravity.inner() - 9.82).abs() < 0.05);
+        assert!((*body.solar_irradiance.inner() - 1361.0).abs() < 5.0);
+        assert!((*body.equilibrium_temp.inner() - 254.0).abs() < 3.0);
+        assert!(*body.eccentricity.inner() >= 0.0 && *body.eccentricity.inner() < 1.0);
+        assert!(*body.inclination.inner() >= 0.0);
+        assert!(*body.axial_tilt.inner() >= 0.0 && *body.axial_tilt.inner() < 45.0);
+        assert!(!*body.tidal_locked.inner());
         assert_eq!(body.planet_type, PlanetType::Terran);
         assert!(body.is_in_hz);
     }
@@ -363,10 +368,10 @@ mod tests {
         let mut rng2 = WorldRng::new(42);
         let b2 = derive_body(&placed, &star, &mut rng2, 3);
 
-        assert_eq!(b1.eccentricity, b2.eccentricity);
-        assert_eq!(b1.inclination, b2.inclination);
-        assert_eq!(b1.axial_tilt, b2.axial_tilt);
-        assert_eq!(b1.rotation_period, b2.rotation_period);
+        assert_eq!(*b1.eccentricity.inner(), *b2.eccentricity.inner());
+        assert_eq!(*b1.inclination.inner(), *b2.inclination.inner());
+        assert_eq!(*b1.axial_tilt.inner(), *b2.axial_tilt.inner());
+        assert_eq!(*b1.rotation_period.inner(), *b2.rotation_period.inner());
     }
 
     #[test]
@@ -381,11 +386,41 @@ mod tests {
         let mut rng = WorldRng::new(1);
         let body = derive_body(&placed, &star, &mut rng, 0);
         assert!(
-            body.tidal_locked,
+            *body.tidal_locked.inner(),
             "close-in planet should be tidally locked"
         );
         // Rotation period should match orbital period in hours.
-        let orbital_hours = orbital_period_years(0.03, star.mass) * 365.25 * 24.0;
-        assert!((body.rotation_period - orbital_hours).abs() < 1e-6);
+        let orbital_hours = orbital_period_years(0.03, *star.mass.inner()) * 365.25 * 24.0;
+        assert!((*body.rotation_period.inner() - orbital_hours).abs() < 1e-6);
+    }
+
+    // ------------------------------------------------------------------
+    // CORE-06 per-field provenance tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn core06_derive_body_tags_every_scalar_derived() {
+        let star = sun();
+        let placed = PlacedPlanet {
+            semi_major_axis: 1.0,
+            radius: 1.0,
+            is_known: false,
+            name: None,
+        };
+        let mut rng = WorldRng::new(7);
+        let body = derive_body(&placed, &star, &mut rng, 0);
+
+        assert!(body.semi_major_axis.is_derived());
+        assert!(body.eccentricity.is_derived());
+        assert!(body.inclination.is_derived());
+        assert!(body.axial_tilt.is_derived());
+        assert!(body.mass.is_derived());
+        assert!(body.radius.is_derived());
+        assert!(body.density.is_derived());
+        assert!(body.surface_gravity.is_derived());
+        assert!(body.solar_irradiance.is_derived());
+        assert!(body.equilibrium_temp.is_derived());
+        assert!(body.tidal_locked.is_derived());
+        assert!(body.rotation_period.is_derived());
     }
 }

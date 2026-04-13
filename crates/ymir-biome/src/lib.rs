@@ -7,11 +7,13 @@
 pub mod biome_map;
 pub mod markov;
 pub mod palette;
+pub mod water_overlay;
 pub mod weight_schema;
 pub mod whittaker;
 
 pub use biome_map::{BiomeMap, BiomeMapConfig};
 pub use markov::{SmoothingConfig, smooth_biomes};
 pub use palette::{Biome, BiomePalette, palette_for};
+pub use water_overlay::{WaterOverlayConfig, apply_water_overlay};
 pub use weight_schema::{BiomeTransitions, default_transitions};
 pub use whittaker::classify;

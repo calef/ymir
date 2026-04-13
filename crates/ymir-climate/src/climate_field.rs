@@ -77,27 +77,33 @@ mod tests {
     use ymir_atmosphere::atmosphere_model::AtmosphereModel;
     use ymir_atmosphere::composition::AtmosphereClass;
     use ymir_atmosphere::retention::Gas;
+    use ymir_core::Sourced;
     use ymir_surface::skeleton::SkeletonWorld;
     use ymir_system::orbital_body::{OrbitalBody, PlanetType};
 
+    fn d(v: f64) -> Sourced<f64> {
+        Sourced::derived(v, "test")
+    }
+
     fn earth_body() -> OrbitalBody {
         OrbitalBody {
-            semi_major_axis: 1.0,
-            eccentricity: 0.0167,
-            inclination: 0.0,
-            axial_tilt: 23.4,
-            mass: 1.0,
-            radius: 1.0,
-            density: 5.51,
-            surface_gravity: 9.81,
-            solar_irradiance: 1361.0,
-            equilibrium_temp: 254.0,
-            tidal_locked: false,
-            rotation_period: 24.0,
+            semi_major_axis: d(1.0),
+            eccentricity: d(0.0167),
+            inclination: d(0.0),
+            axial_tilt: d(23.4),
+            mass: d(1.0),
+            radius: d(1.0),
+            density: d(5.51),
+            surface_gravity: d(9.81),
+            solar_irradiance: d(1361.0),
+            equilibrium_temp: d(254.0),
+            tidal_locked: Sourced::derived(false, "test"),
+            rotation_period: d(24.0),
             is_in_hz: true,
             planet_type: PlanetType::Terran,
             name: Some("Earth".into()),
             is_known_exoplanet: false,
+            continental_fraction: None,
         }
     }
 
@@ -107,13 +113,13 @@ mod tests {
         composition.insert(Gas::O2, 0.21);
         composition.insert(Gas::H2O, 0.01);
         AtmosphereModel {
-            surface_pressure: 1.0,
-            composition,
-            greenhouse_factor: 288.0 / 254.0,
-            effective_surface_temp: 288.0,
-            scale_height: 8.0,
-            moisture_capacity: 1.0,
-            uv_surface_flux: 0.05,
+            surface_pressure: d(1.0),
+            composition: Sourced::derived(composition, "test"),
+            greenhouse_factor: d(288.0 / 254.0),
+            effective_surface_temp: d(288.0),
+            scale_height: d(8.0),
+            moisture_capacity: d(1.0),
+            uv_surface_flux: d(0.05),
             class: AtmosphereClass::NitrogenOxygen,
             retained: vec![Gas::N2, Gas::O2, Gas::H2O],
         }
@@ -224,7 +230,7 @@ mod tests {
     #[test]
     fn airless_world_has_zero_winds() {
         let mut atmo = earth_atmosphere();
-        atmo.surface_pressure = 0.0;
+        atmo.surface_pressure = d(0.0);
         atmo.class = AtmosphereClass::None;
         let world = SkeletonWorld::build(earth_body(), atmo, 3, 7);
         let map = ClimateMap::build(&world, &ClimateConfig::default());

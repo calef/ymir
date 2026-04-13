@@ -152,8 +152,8 @@ pub fn build_moisture_field(
     let n = world.grid.tiles.len();
 
     let atmo = &world.atmosphere;
-    let has_h2o = atmo.composition.contains_key(&Gas::H2O);
-    let is_dry = !has_h2o || atmo.surface_pressure < DRY_PRESSURE_EPS_BAR;
+    let has_h2o = atmo.composition.inner().contains_key(&Gas::H2O);
+    let is_dry = !has_h2o || *atmo.surface_pressure.inner() < DRY_PRESSURE_EPS_BAR;
     if is_dry {
         return MoistureField {
             per_tile: vec![0.0; n],
@@ -164,8 +164,8 @@ pub fn build_moisture_field(
     // per-tile) so it sets a planet-scale cap rather than reacting to each
     // tile's local temperature. This keeps the field interpretable as
     // "fraction of the local maximum capacity" for a given planet.
-    let t_ref = atmo.effective_surface_temp;
-    let p_ref = atmo.surface_pressure;
+    let t_ref = *atmo.effective_surface_temp.inner();
+    let p_ref = *atmo.surface_pressure.inner();
     let cc_scale = (t_ref / CC_REF_TEMP_K).powi(2) * (p_ref / CC_REF_PRESSURE_BAR).max(0.0).sqrt();
     let ceiling = cc_scale.clamp(CEILING_MIN, CEILING_MAX);
 
@@ -173,7 +173,7 @@ pub fn build_moisture_field(
     let mut per_tile = Vec::with_capacity(n);
 
     for (i, tile) in world.grid.tiles.iter().enumerate() {
-        let base = if body.tidal_locked {
+        let base = if *body.tidal_locked.inner() {
             tidal_base_humidity(tile.lat, tile.lon, cfg.substellar_lon_rad)
         } else {
             latitude_base_humidity(tile.lat)
@@ -273,29 +273,35 @@ mod tests {
     use ymir_atmosphere::atmosphere_model::AtmosphereModel;
     use ymir_atmosphere::composition::AtmosphereClass;
     use ymir_atmosphere::retention::Gas;
+    use ymir_core::Sourced;
     use ymir_surface::skeleton::SkeletonWorld;
     use ymir_system::orbital_body::{OrbitalBody, PlanetType};
 
     use crate::temperature::{TemperatureConfig, build_temperature_field};
 
+    fn d(v: f64) -> Sourced<f64> {
+        Sourced::derived(v, "test")
+    }
+
     fn earth_body() -> OrbitalBody {
         OrbitalBody {
-            semi_major_axis: 1.0,
-            eccentricity: 0.0167,
-            inclination: 0.0,
-            axial_tilt: 23.4,
-            mass: 1.0,
-            radius: 1.0,
-            density: 5.51,
-            surface_gravity: 9.81,
-            solar_irradiance: 1361.0,
-            equilibrium_temp: 254.0,
-            tidal_locked: false,
-            rotation_period: 24.0,
+            semi_major_axis: d(1.0),
+            eccentricity: d(0.0167),
+            inclination: d(0.0),
+            axial_tilt: d(23.4),
+            mass: d(1.0),
+            radius: d(1.0),
+            density: d(5.51),
+            surface_gravity: d(9.81),
+            solar_irradiance: d(1361.0),
+            equilibrium_temp: d(254.0),
+            tidal_locked: Sourced::derived(false, "test"),
+            rotation_period: d(24.0),
             is_in_hz: true,
             planet_type: PlanetType::Terran,
             name: Some("Earth".into()),
             is_known_exoplanet: false,
+            continental_fraction: None,
         }
     }
 
@@ -305,13 +311,13 @@ mod tests {
         composition.insert(Gas::O2, 0.21);
         composition.insert(Gas::H2O, 0.01);
         AtmosphereModel {
-            surface_pressure: 1.0,
-            composition,
-            greenhouse_factor: 288.0 / 254.0,
-            effective_surface_temp: 288.0,
-            scale_height: 8.0,
-            moisture_capacity: 1.0,
-            uv_surface_flux: 0.05,
+            surface_pressure: d(1.0),
+            composition: Sourced::derived(composition, "test"),
+            greenhouse_factor: d(288.0 / 254.0),
+            effective_surface_temp: d(288.0),
+            scale_height: d(8.0),
+            moisture_capacity: d(1.0),
+            uv_surface_flux: d(0.05),
             class: AtmosphereClass::NitrogenOxygen,
             retained: vec![Gas::N2, Gas::O2, Gas::H2O],
         }
@@ -323,13 +329,13 @@ mod tests {
         composition.insert(Gas::N2, 0.03);
         composition.insert(Gas::Ar, 0.02);
         AtmosphereModel {
-            surface_pressure: 0.006,
-            composition,
-            greenhouse_factor: 1.03,
-            effective_surface_temp: 210.0,
-            scale_height: 11.0,
-            moisture_capacity: 0.0,
-            uv_surface_flux: 0.8,
+            surface_pressure: d(0.006),
+            composition: Sourced::derived(composition, "test"),
+            greenhouse_factor: d(1.03),
+            effective_surface_temp: d(210.0),
+            scale_height: d(11.0),
+            moisture_capacity: d(0.0),
+            uv_surface_flux: d(0.8),
             class: AtmosphereClass::ThinCO2,
             retained: vec![Gas::CO2, Gas::N2, Gas::Ar],
         }
@@ -338,18 +344,20 @@ mod tests {
     fn mars_atmosphere_with_trace_h2o() -> AtmosphereModel {
         let mut a = mars_atmosphere_no_h2o();
         // Barely above the dry-pressure floor, with trace H2O in the mix.
-        a.surface_pressure = 0.012;
-        a.composition.insert(Gas::H2O, 1.0e-5);
+        a.surface_pressure = d(0.012);
+        let mut comp = a.composition.inner().clone();
+        comp.insert(Gas::H2O, 1.0e-5);
+        a.composition = Sourced::derived(comp, "test");
         a.retained.push(Gas::H2O);
         a
     }
 
     fn tidal_body() -> OrbitalBody {
         let mut b = earth_body();
-        b.tidal_locked = true;
-        b.rotation_period = 24.0 * 300.0;
-        b.solar_irradiance = 900.0;
-        b.equilibrium_temp = 230.0;
+        b.tidal_locked = Sourced::derived(true, "test");
+        b.rotation_period = d(24.0 * 300.0);
+        b.solar_irradiance = d(900.0);
+        b.equilibrium_temp = d(230.0);
         b.name = Some("TidalWorld".into());
         b
     }
@@ -357,8 +365,8 @@ mod tests {
     fn tidal_atmosphere() -> AtmosphereModel {
         // Thin-ish but still holds water vapor.
         let mut a = earth_atmosphere();
-        a.surface_pressure = 0.5;
-        a.effective_surface_temp = 260.0;
+        a.surface_pressure = d(0.5);
+        a.effective_surface_temp = d(260.0);
         a
     }
 

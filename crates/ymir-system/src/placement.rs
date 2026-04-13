@@ -217,7 +217,7 @@ pub fn place_planets(
     let target_count = {
         let base = config.max_planets;
         // Metallicity boost: metal-rich stars tend to have more planets.
-        let metal_factor = (1.0 + star.metallicity * 0.5).clamp(0.5, 1.5);
+        let metal_factor = (1.0 + *star.metallicity.inner() * 0.5).clamp(0.5, 1.5);
         let target = (base as f64 * metal_factor).round() as usize;
         target.min(config.max_planets)
     };
@@ -237,7 +237,7 @@ pub fn place_planets(
             a,
             mass_solar,
             &orbit_mass,
-            star.mass,
+            *star.mass.inner(),
             config.min_hill_separation,
         ) {
             continue;
@@ -352,7 +352,7 @@ mod tests {
             let a2 = pair[1].semi_major_axis;
             let m1 = mass_from_radius(pair[0].radius) * EARTH_MASS_IN_SOLAR;
             let m2 = mass_from_radius(pair[1].radius) * EARTH_MASS_IN_SOLAR;
-            let r_hill = mutual_hill_radius(a1, m1, a2, m2, star.mass);
+            let r_hill = mutual_hill_radius(a1, m1, a2, m2, *star.mass.inner());
 
             if r_hill > 0.0 {
                 let delta = (a2 - a1) / r_hill;

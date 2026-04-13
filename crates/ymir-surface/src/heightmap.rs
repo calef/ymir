@@ -28,6 +28,16 @@ pub struct HeightmapConfig {
     pub lacunarity: f64,
     /// Per-octave amplitude multiplier.
     pub gain: f64,
+    /// Optional calibration target: fraction of tiles that should end up at
+    /// or above the new sea-level reference (elevation >= 0 m).
+    ///
+    /// When set, the generator runs the normal tectonic + noise pass, then
+    /// picks a threshold at the `(1 - target_continental_fraction)` percentile
+    /// of the elevation distribution and shifts every tile so that threshold
+    /// becomes the new zero. Relative relief structure is preserved; only the
+    /// sea-level reference moves. When `None`, no shift is applied.
+    #[serde(default)]
+    pub target_continental_fraction: Option<f64>,
 }
 
 impl Default for HeightmapConfig {
@@ -39,6 +49,7 @@ impl Default for HeightmapConfig {
             base_frequency: 2.0,
             lacunarity: 2.0,
             gain: 0.5,
+            target_continental_fraction: None,
         }
     }
 }
@@ -124,7 +135,7 @@ pub fn generate_heightmap(
     // Lower gravity → less weight pulling the crust down → taller features.
     // The clamp keeps extreme low-gravity bodies from producing relief on a
     // scale the rest of the pipeline can't reason about.
-    let gravity = body.surface_gravity.max(0.01);
+    let gravity = body.surface_gravity.inner().max(0.01);
     let noise_scale = (EARTH_GRAVITY / gravity).clamp(NOISE_SCALE_MIN, NOISE_SCALE_MAX);
     let noise_amplitude_m = EARTH_RELIEF_M * noise_scale;
 
@@ -138,7 +149,7 @@ pub fn generate_heightmap(
 
     // --- 3. Yield-strength mountain cap -------------------------------------
     // body.density is in g/cm^3; convert to kg/m^3.
-    let density_kg_m3 = (body.density * 1000.0).max(500.0);
+    let density_kg_m3 = (*body.density.inner() * 1000.0).max(500.0);
     let h_max = CRUST_YIELD_STRENGTH_PA / (density_kg_m3 * gravity);
 
     // --- 4. Combine per tile and clamp --------------------------------------
@@ -152,49 +163,94 @@ pub fn generate_heightmap(
         elevations_m.push(clamped);
     }
 
+    // --- 5. Optional sea-level calibration ----------------------------------
+    //
+    // Shift all elevations so that `target_continental_fraction` of them end
+    // up at or above zero. This preserves relative relief structure while
+    // pinning the land/ocean split to an observed value (e.g. Earth ~0.29).
+    if let Some(frac) = cfg.target_continental_fraction {
+        calibrate_sea_level(&mut elevations_m, frac);
+    }
+
     ElevationMap { elevations_m }
+}
+
+/// Shift `elevations_m` in place so that the fraction of tiles at or above
+/// zero equals `target_fraction` (clamped to `[0.0, 1.0]`).
+///
+/// The shift is chosen by sorting elevations and picking the value at the
+/// `(1 - target_fraction)` percentile as the new sea level. When
+/// `target_fraction == 1.0` we shift by the minimum so every tile is at or
+/// above zero; when `target_fraction == 0.0` we shift by the maximum so every
+/// tile is at or below zero. Empty input is a no-op.
+fn calibrate_sea_level(elevations_m: &mut [f64], target_fraction: f64) {
+    let n = elevations_m.len();
+    if n == 0 {
+        return;
+    }
+    let target = target_fraction.clamp(0.0, 1.0);
+
+    let mut sorted: Vec<f64> = elevations_m.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Threshold index: the smallest index `k` such that at least `target`
+    // fraction of tiles have elevation >= sorted[k]. Equivalently,
+    // `k = floor((1 - target) * n)`, clamped to [0, n-1].
+    let raw_k = ((1.0 - target) * n as f64).floor() as isize;
+    let k = raw_k.clamp(0, n as isize - 1) as usize;
+    let threshold = sorted[k];
+
+    for e in elevations_m.iter_mut() {
+        *e -= threshold;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tectonics::{TectonicConfig, generate_tectonics};
+    use ymir_core::Sourced;
     use ymir_core::prng::WorldRng;
     use ymir_system::orbital_body::{OrbitalBody, PlanetType};
 
+    fn d(v: f64) -> Sourced<f64> {
+        Sourced::derived(v, "test")
+    }
+
     fn earth_like() -> OrbitalBody {
         OrbitalBody {
-            semi_major_axis: 1.0,
-            eccentricity: 0.0167,
-            inclination: 0.0,
-            axial_tilt: 23.4,
-            mass: 1.0,
-            radius: 1.0,
-            density: 5.51,
-            surface_gravity: 9.81,
-            solar_irradiance: 1361.0,
-            equilibrium_temp: 254.0,
-            tidal_locked: false,
-            rotation_period: 24.0,
+            semi_major_axis: d(1.0),
+            eccentricity: d(0.0167),
+            inclination: d(0.0),
+            axial_tilt: d(23.4),
+            mass: d(1.0),
+            radius: d(1.0),
+            density: d(5.51),
+            surface_gravity: d(9.81),
+            solar_irradiance: d(1361.0),
+            equilibrium_temp: d(254.0),
+            tidal_locked: Sourced::derived(false, "test"),
+            rotation_period: d(24.0),
             is_in_hz: true,
             planet_type: PlanetType::Terran,
             name: Some("Earth".into()),
             is_known_exoplanet: false,
+            continental_fraction: None,
         }
     }
 
     fn low_gravity() -> OrbitalBody {
         let mut b = earth_like();
-        b.surface_gravity = 3.71; // Mars-like
-        b.density = 3.93;
+        b.surface_gravity = d(3.71); // Mars-like
+        b.density = d(3.93);
         b.name = Some("MarsLike".into());
         b
     }
 
     fn high_gravity() -> OrbitalBody {
         let mut b = earth_like();
-        b.surface_gravity = 25.0;
-        b.density = 7.0;
+        b.surface_gravity = d(25.0);
+        b.density = d(7.0);
         b.name = Some("HeavyWorld".into());
         b
     }
@@ -313,13 +369,96 @@ mod tests {
     }
 
     #[test]
+    fn calibrate_sea_level_hits_target_fraction() {
+        // Synthetic elevation field: 100 evenly spaced values. After
+        // calibration to 0.3, exactly 30% (within 1%) should be at or above 0.
+        let body = earth_like();
+        let (grid, tectonics) = make_scene(17, &body);
+        let cfg = HeightmapConfig {
+            target_continental_fraction: Some(0.3),
+            ..Default::default()
+        };
+        let map = generate_heightmap(&grid, &tectonics, &body, 17, &cfg);
+
+        let n = map.elevations_m.len();
+        let land = map.elevations_m.iter().filter(|&&h| h >= 0.0).count();
+        let frac = land as f64 / n as f64;
+        assert!(
+            (frac - 0.3).abs() <= 0.01,
+            "expected ~0.30 land fraction after calibration, got {frac:.4} ({land}/{n})"
+        );
+    }
+
+    #[test]
+    fn calibrate_sea_level_all_land() {
+        // target_continental_fraction = 1.0 means every tile should be >= 0.
+        let body = earth_like();
+        let (grid, tectonics) = make_scene(23, &body);
+        let cfg = HeightmapConfig {
+            target_continental_fraction: Some(1.0),
+            ..Default::default()
+        };
+        let map = generate_heightmap(&grid, &tectonics, &body, 23, &cfg);
+
+        let below = map.elevations_m.iter().filter(|&&h| h < 0.0).count();
+        assert_eq!(
+            below, 0,
+            "expected 0 tiles below sea level with target=1.0, got {below}"
+        );
+    }
+
+    #[test]
+    fn calibrated_heightmap_is_still_deterministic() {
+        let body = earth_like();
+        let (grid, tectonics) = make_scene(99, &body);
+        let cfg = HeightmapConfig {
+            target_continental_fraction: Some(0.29),
+            ..Default::default()
+        };
+        let a = generate_heightmap(&grid, &tectonics, &body, 99, &cfg);
+        let b = generate_heightmap(&grid, &tectonics, &body, 99, &cfg);
+        assert_eq!(a.elevations_m, b.elevations_m);
+    }
+
+    #[test]
+    fn calibration_preserves_relative_ordering() {
+        // Shifting every elevation by a constant threshold preserves ordering.
+        let body = earth_like();
+        let (grid, tectonics) = make_scene(5, &body);
+        let cfg_raw = HeightmapConfig::default();
+        let cfg_cal = HeightmapConfig {
+            target_continental_fraction: Some(0.29),
+            ..Default::default()
+        };
+
+        let raw = generate_heightmap(&grid, &tectonics, &body, 5, &cfg_raw);
+        let cal = generate_heightmap(&grid, &tectonics, &body, 5, &cfg_cal);
+        assert_eq!(raw.elevations_m.len(), cal.elevations_m.len());
+
+        // Compute pairwise deltas; they should all match the same constant.
+        let delta0 = cal.elevations_m[0] - raw.elevations_m[0];
+        for (i, (&r, &c)) in raw
+            .elevations_m
+            .iter()
+            .zip(cal.elevations_m.iter())
+            .enumerate()
+        {
+            let d = c - r;
+            assert!(
+                (d - delta0).abs() < 1e-6,
+                "tile {i}: delta {d} differs from shared shift {delta0}"
+            );
+        }
+    }
+
+    #[test]
     fn elevations_within_yield_strength_cap() {
         let body = earth_like();
         let (grid, tectonics) = make_scene(11, &body);
         let map = generate_heightmap(&grid, &tectonics, &body, 11, &HeightmapConfig::default());
 
-        let density_kg_m3 = body.density * 1000.0;
-        let h_max = CRUST_YIELD_STRENGTH_PA / (density_kg_m3 * body.surface_gravity);
+        let density_kg_m3 = *body.density.inner() * 1000.0;
+        let h_max = CRUST_YIELD_STRENGTH_PA / (density_kg_m3 * *body.surface_gravity.inner());
         let floor = -2.0 * h_max;
         for (i, &h) in map.elevations_m.iter().enumerate() {
             assert!(
