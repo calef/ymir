@@ -1132,11 +1132,13 @@ Integration test: open the fixture catalog, query for a known set of stars (Sol,
 
 ### VALID-08: Provenance dump validation
 - **Crate:** ymir (binary, integration tests)
-- **Status:** in-progress
+- **Status:** done
 - **Depends on:** CORE-07
 - **Blocked:** no
 - **Model:** sonnet
 - **Assignee:** agent
 
 Integration test: generate an Earth world with the standard continental_fraction + atmosphere overrides; parse `provenance.json`; assert every field has a well-formed `Source`; count Observed vs Derived vs Assumed per stage and check against a golden histogram. Regenerate with an additional override; re-dump; assert the flipped fields transitioned Derived → Observed.
+
+Landed 3 integration tests in `tests/provenance_dump.rs`: (1) golden histogram for Earth (stellar: 7 Assumed + 5 Derived; orbital_body: 13 Observed; atmosphere: 7 Derived; skeleton/climate/biome: 1 Derived each), (2) reference/instrument metadata validation for five orbital_body fields and continental_fraction, (3) atmosphere `surface_pressure` override flip from Derived to Observed with value and citation checks. All three pass. No new crate dependencies required; `serde_json` already in the binary's dependency tree and is available to integration tests via the workspace.
 
