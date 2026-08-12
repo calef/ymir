@@ -23,7 +23,7 @@ ymir-climate = { path = "../ymir-climate", version = "0.1.0" }
 ymir-biome = { path = "../ymir-biome", version = "0.1.0" }
 
 [dev-dependencies]
-bincode = "1"
+bincode = "3"
 serde_json = "1"
 ymir-atmosphere = { path = "../ymir-atmosphere", version = "0.1.0" }
 ymir-catalog = { path = "../ymir-catalog", version = "0.1.0" }

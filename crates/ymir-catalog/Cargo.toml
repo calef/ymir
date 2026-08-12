@@ -21,7 +21,7 @@ categories = ["science", "simulation"]
 parquet = { version = "58", default-features = false, features = ["snap", "zstd"] }
 csv = "1"
 serde = { version = "1", features = ["derive"] }
-bincode = "1"
+bincode = "3"
 thiserror = "1"
 ymir-core = { path = "../ymir-core", version = "0.1.0" }
 
